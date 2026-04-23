@@ -1,0 +1,16 @@
+Nome,Departamento,Cargo,Salario,Data_Admissao,Meta_Vendas,Vendas_Realizadas,Percentual_Comissao,Ativo
+Joao Silva,Vendas,Representante,8500.00,2020-03-15,150000.00,142000.00,5.5,Sim
+Maria Santos,Marketing,Analista,7200.00,2019-07-22,80000.00,95000.00,4.0,Sim
+Pedro Costa,TI,Desenvolvedor,12000.00,2018-01-10,0.00,0.00,0.0,Sim
+Ana Oliveira,Vendas,Gerente,15000.00,2017-05-30,500000.00,520000.00,8.0,Sim
+Carlos Lima,Financeiro,Analista,6800.00,2021-09-12,0.00,0.00,0.0,Sim
+Fernanda Souza,Marketing,Coordenadora,9800.00,2019-11-05,120000.00,115000.00,6.0,Sim
+Ricardo Pereira,TI,Arquiteto,18000.00,2016-02-28,0.00,0.00,0.0,Sim
+Juliana Martins,Vendas,Representante,7800.00,2022-04-18,100000.00,108000.00,5.0,Sim
+Bruno Alves,Financeiro,Gerente,14000.00,2018-08-14,0.00,0.00,0.0,Sim
+Camila Rocha,Marketing,Especialista,8500.00,2020-12-01,90000.00,88000.00,4.5,Sim
+Lucas Mendes,TI,Desenvolvedor,11000.00,2019-03-20,0.00,0.00,0.0,Sim
+Patricia Dias,Vendas,Representante,8200.00,2021-06-08,120000.00,135000.00,5.5,Sim
+Roberto Nunes,Financeiro,Analista,7000.00,2020-01-15,0.00,0.00,0.0,Nao
+Amanda Ferreira,Marketing,Analista,7500.00,2022-08-30,85000.00,92000.00,4.0,Sim
+Thiago Barbosa,TI,DevOps,13500.00,2017-10-25,0.00,0.00,0.0,Sim

@@ -1,0 +1,9 @@
+.DS_Store
+*.log
+.vscode/
+.idea/
+*.swp
+*.swo
+postgres-data/
+redis-data/
+datavision-storage/
