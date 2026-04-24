@@ -1,19 +1,17 @@
-version: "3.8"
-
 services:
   # ============================================
   # FRONTEND
   # ============================================
   frontend:
     build:
-      context: ./frontend
+      context: ../frontend
       dockerfile: Dockerfile
     ports:
       - "5173:5173"
     environment:
-      - VITE_API_URL=http://localhost:8000
+      - VITE_API_URL=http://backend:8000
     volumes:
-      - ./frontend:/app
+      - ../frontend:/app
       - /app/node_modules
     depends_on:
       - backend
@@ -25,7 +23,7 @@ services:
   # ============================================
   backend:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
@@ -35,9 +33,9 @@ services:
       - STORAGE_PATH=/app/storage
       - DUCKDB_PATH=/app/storage/analytics.db
       - DEBUG=true
-      - CORS_ORIGINS=["http://localhost:5173"]
+      - CORS_ORIGINS=["http://localhost:5173","http://192.168.15.137:5173"]
     volumes:
-      - ./backend/app:/app/app
+      - ../backend/app:/app/app
       - datavision-storage:/app/storage
     depends_on:
       - postgres
@@ -45,12 +43,12 @@ services:
     networks:
       - datavision-network
 
-  # ============================================
+  # ============================================ #aaaaaaaaaaaaa
   # WORKER (Celery)
   # ============================================
   worker:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: Dockerfile
     command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
     environment:
@@ -58,7 +56,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - STORAGE_PATH=/app/storage
     volumes:
-      - ./backend/app:/app/app
+      - ../backend/app:/app/app
       - datavision-storage:/app/storage
     depends_on:
       - postgres
