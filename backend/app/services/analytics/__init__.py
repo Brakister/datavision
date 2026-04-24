@@ -217,52 +217,62 @@ class AnalyticsService:
         """Gera dados agregados para um grafico especifico."""
 
         db_path = self.storage_path / file_uuid / "analytics.db"
+        if not db_path.exists():
+            raise FileNotFoundError(f"Banco de dados para {file_uuid} nao encontrado.")
+
         conn = duckdb.connect(str(db_path), read_only=True)
         table_name = self._sanitize_table_name(sheet_name)
 
         dims = [f'"{d}"' for d in dimension_columns]
+        mets = [f'"{m}"' for m in metric_columns]
 
-        agg_funcs = {"sum": "SUM", "avg": "AVG", "count": "COUNT",
-                     "min": "MIN", "max": "MAX", "distinct": "COUNT(DISTINCT"}
-        agg = agg_funcs.get(aggregation, "SUM")
+        # Scatter plot nao tem agregacao, retorna valores brutos
+        if chart_type == "scatter" and len(mets) >= 2:
+            select_cols = mets
+            group_by = ""
+        else:
+            agg_funcs = {"sum": "SUM", "avg": "AVG", "count": "COUNT",
+                         "min": "MIN", "max": "MAX", "distinct": "COUNT(DISTINCT"}
+            agg = agg_funcs.get(aggregation, "SUM")
 
-        metrics = []
-        for m in metric_columns:
-            if aggregation == "distinct":
-                metrics.append(f'{agg}("{m}")) AS "{m}"')
-            else:
-                metrics.append(f'{agg}("{m}") AS "{m}"')
+            agg_metrics = []
+            for m_col in metric_columns:
+                if aggregation == "distinct":
+                    agg_metrics.append(f'{agg}("{m_col}")) AS "{m_col}"')
+                else:
+                    agg_metrics.append(f'{agg}("{m_col}") AS "{m_col}"')
+
+            select_cols = dims + agg_metrics
+            group_by = f"GROUP BY {', '.join(dims)}" if dims else ""
 
         where_clause = ""
         if filters:
             conditions = []
             for col, val in filters.items():
+                # Sanitiza nome da coluna para evitar injecao
+                safe_col = f'"{col.replace("\"", "")}"'
                 if isinstance(val, list):
-                    placeholders = ", ".join(f"'{v}'" for v in val)
-                    conditions.append(f'"{col}" IN ({placeholders})')
+                    placeholders = ", ".join(f"'{str(v).replace("'", "''")}'" for v in val)
+                    conditions.append(f'{safe_col} IN ({placeholders})')
                 elif isinstance(val, dict) and "min" in val and "max" in val:
-                    conditions.append(f'"{col}" BETWEEN {val["min"]} AND {val["max"]}')
+                    conditions.append(f'{safe_col} BETWEEN {float(val["min"])} AND {float(val["max"])}')
                 else:
-                    conditions.append(f'"{col}" = \'{val}\'')
+                    conditions.append(f"{safe_col} = '{str(val).replace("'", "''")}'")
             if conditions:
                 where_clause = "WHERE " + " AND ".join(conditions)
 
-        group_by = ", ".join(dims) if dims else ""
-        select_cols = dims + metrics
+        order_by = f"ORDER BY {dims[0]}" if dims else ""
+        limit_clause = f"LIMIT {min(limit, 10000)}"  # Hard limit
 
-        query = f"SELECT {', '.join(select_cols)} FROM {table_name} {where_clause}"
-        if group_by:
-            query += f" GROUP BY {group_by}"
-        if dims:
-            query += f" ORDER BY {dims[0]}"
-        query += f" LIMIT {limit}"
+        query = f"SELECT {', '.join(select_cols)} FROM {table_name} {where_clause} {group_by} {order_by} {limit_clause}"
 
         try:
+            logger.debug(f"Executando query de chart data: {query}")
             result_df = conn.execute(query).fetchdf()
             data = result_df.to_dict("records")
             total_rows = len(data)
         except Exception as e:
-            logger.error(f"Erro na query de chart data: {e}")
+            logger.error(f"Erro na query de chart data: {e} | Query: {query}")
             data = []
             total_rows = 0
         finally:
