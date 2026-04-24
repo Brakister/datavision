@@ -11,6 +11,7 @@ from app.core.exceptions import ValidationException
 from app.db.database import get_db
 from app.models import FileUpload
 from app.schemas import ColumnSchema, FileMetadataResponse, IntegrityReport, SheetMetadata
+from app.services.local_store import load_record
 
 router = APIRouter(prefix="/files", tags=["Files"])
 settings = get_settings()
@@ -49,20 +50,46 @@ def _get_file_storage_dir(file_record: FileUpload) -> Path:
         return Path(storage_path).parent
     return Path(settings.STORAGE_PATH) / str(file_record.id)
 
+def _get_storage_dir_from_local(file_uuid: str, local_record: dict) -> Path:
+    storage_path = (local_record.get("metadata_json") or {}).get("storage_path")
+    if storage_path:
+        return Path(storage_path).parent
+    return Path(settings.STORAGE_PATH) / file_uuid
+
 
 @router.get("/{file_uuid}/metadata", response_model=FileMetadataResponse)
-async def get_file_metadata(file_uuid: str, db: AsyncSession = Depends(get_db)):
+async def get_file_metadata(file_uuid: str, db: AsyncSession | None = Depends(get_db)):
     """Retorna metadados completos do arquivo processado."""
     try:
         parsed_uuid = uuid.UUID(file_uuid)
     except ValueError as exc:
         raise ValidationException("UUID invalido", error_code="INVALID_UUID", status_code=400) from exc
 
-    file_record = await db.get(FileUpload, parsed_uuid)
-    if file_record is None:
-        raise ValidationException("Arquivo nao encontrado", error_code="FILE_NOT_FOUND", status_code=404)
+    if db is not None:
+        file_record = await db.get(FileUpload, parsed_uuid)
+        if file_record is None:
+            raise ValidationException("Arquivo nao encontrado", error_code="FILE_NOT_FOUND", status_code=404)
+        storage_path = _get_file_storage_dir(file_record)
+        original_filename = file_record.original_filename
+        file_format = file_record.file_format
+        file_size_bytes = file_record.file_size_bytes
+        file_hash_sha256 = file_record.file_hash_sha256
+        status = file_record.status
+        metadata_json = file_record.metadata_json or {}
+        created_at = file_record.created_at.isoformat()
+    else:
+        local = load_record(file_uuid)
+        if local is None:
+            raise ValidationException("Arquivo nao encontrado", error_code="FILE_NOT_FOUND", status_code=404)
+        storage_path = _get_storage_dir_from_local(file_uuid, local)
+        original_filename = local.get("original_filename", "unknown")
+        file_format = local.get("file_format", "csv")
+        file_size_bytes = int(local.get("file_size_bytes", 0))
+        file_hash_sha256 = local.get("file_hash_sha256", "")
+        status = local.get("status", "completed")
+        metadata_json = local.get("metadata_json") or {}
+        created_at = metadata_json.get("created_at") or ""
 
-    storage_path = _get_file_storage_dir(file_record)
     db_path = storage_path / "analytics.db"
     if not db_path.exists():
         raise ValidationException(
@@ -136,7 +163,6 @@ async def get_file_metadata(file_uuid: str, db: AsyncSession = Depends(get_db)):
                 sheet_hash=sheet_hash,
             ))
 
-        metadata_json = file_record.metadata_json or {}
         persisted_report = metadata_json.get("integrity_report", {})
         formulas_detected = int(persisted_report.get("formulas_detected", 0))
         merged_cells_detected = int(persisted_report.get("merged_cells_detected", 0))
@@ -147,11 +173,11 @@ async def get_file_metadata(file_uuid: str, db: AsyncSession = Depends(get_db)):
 
         return FileMetadataResponse(
             uuid=file_uuid,
-            original_filename=file_record.original_filename,
-            file_format=file_record.file_format,
-            file_size_bytes=file_record.file_size_bytes,
-            file_hash_sha256=file_record.file_hash_sha256,
-            status=file_record.status,
+            original_filename=original_filename,
+            file_format=file_format,
+            file_size_bytes=file_size_bytes,
+            file_hash_sha256=file_hash_sha256,
+            status=status,
             strict_mode=bool(metadata_json.get("strict_mode", False)),
             total_sheets=len(sheets),
             total_rows=total_rows,
@@ -167,8 +193,8 @@ async def get_file_metadata(file_uuid: str, db: AsyncSession = Depends(get_db)):
                 mixed_type_columns=mixed_type_columns,
                 formulas_detected=formulas_detected,
                 merged_cells_detected=merged_cells_detected,
-                file_hash=file_record.file_hash_sha256,
-                file_hash_sha256=file_record.file_hash_sha256,
+                file_hash=file_hash_sha256,
+                file_hash_sha256=file_hash_sha256,
                 sheet_hashes=sheet_hashes,
                 engines_used=engines_used,
                 engine_divergences=engine_divergences,
@@ -176,25 +202,31 @@ async def get_file_metadata(file_uuid: str, db: AsyncSession = Depends(get_db)):
                 errors=errors,
                 strict_mode_blocked=bool(persisted_report.get("strict_mode_blocked", False)),
             ),
-            created_at=file_record.created_at.isoformat(),
+            created_at=created_at,
         )
     finally:
         conn.close()
 
 
 @router.get("/{file_uuid}/sheets/{sheet_name}/schema")
-async def get_sheet_schema(file_uuid: str, sheet_name: str, db: AsyncSession = Depends(get_db)):
+async def get_sheet_schema(file_uuid: str, sheet_name: str, db: AsyncSession | None = Depends(get_db)):
     """Retorna schema detectado de uma aba especifica."""
     try:
         parsed_uuid = uuid.UUID(file_uuid)
     except ValueError as exc:
         raise ValidationException("UUID invalido", error_code="INVALID_UUID", status_code=400) from exc
 
-    file_record = await db.get(FileUpload, parsed_uuid)
-    if file_record is None:
-        raise ValidationException("Arquivo nao encontrado", error_code="FILE_NOT_FOUND", status_code=404)
+    if db is not None:
+        file_record = await db.get(FileUpload, parsed_uuid)
+        if file_record is None:
+            raise ValidationException("Arquivo nao encontrado", error_code="FILE_NOT_FOUND", status_code=404)
+        storage_path = _get_file_storage_dir(file_record)
+    else:
+        local = load_record(file_uuid)
+        if local is None:
+            raise ValidationException("Arquivo nao encontrado", error_code="FILE_NOT_FOUND", status_code=404)
+        storage_path = _get_storage_dir_from_local(file_uuid, local)
 
-    storage_path = _get_file_storage_dir(file_record)
     db_path = storage_path / "analytics.db"
     if not db_path.exists():
         raise ValidationException("Dados nao encontrados", error_code="ANALYTICS_NOT_FOUND", status_code=404)

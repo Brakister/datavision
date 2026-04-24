@@ -15,7 +15,7 @@ async def get_chart_suggestions(file_uuid: str, sheet_name: str) -> list[ChartSu
     return suggestions
 
 
-@router.post("/{file_uuid}/chart-data", response_model=ChartDataResponse)
+@router.post("/chart-data", response_model=ChartDataResponse)
 async def get_chart_data(request: ChartDataRequest):
     """Retorna dados agregados para renderizacao de grafico."""
     result = analytics_service.get_chart_data(
@@ -39,8 +39,12 @@ async def get_chart_data(request: ChartDataRequest):
         generated_at=result["generated_at"],
     )
 
+@router.post("/{file_uuid}/chart-data", response_model=ChartDataResponse, include_in_schema=False)
+async def get_chart_data_legacy(file_uuid: str, request: ChartDataRequest):
+    del file_uuid
+    return await get_chart_data(request)
 
-@router.post("/{file_uuid}/table-data")
+@router.post("/table-data")
 async def get_table_data(request: TableDataRequest):
     """Retorna dados paginados para tabela interativa."""
     result = analytics_service.get_table_data(
@@ -55,3 +59,8 @@ async def get_table_data(request: TableDataRequest):
     )
 
     return result
+
+@router.post("/{file_uuid}/table-data", include_in_schema=False)
+async def get_table_data_legacy(file_uuid: str, request: TableDataRequest):
+    del file_uuid
+    return await get_table_data(request)

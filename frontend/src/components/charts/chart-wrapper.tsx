@@ -4,14 +4,17 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip as UITooltip } from '@/components/ui/tooltip';
+import { cn } from '@/utils/cn';
 import { motion } from 'framer-motion';
 import {
   Maximize2,
+  Minimize2,
   Download,
   Info,
   Filter,
   X,
 } from 'lucide-react';
+import { toPng } from 'html-to-image';
 import type { ChartType } from '@/types';
 
 export interface ChartWrapperProps {
@@ -25,8 +28,9 @@ export interface ChartWrapperProps {
   isLoading?: boolean;
   isEmpty?: boolean;
   children: React.ReactNode;
-  onFullscreen?: () => void;
-  onExport?: () => void;
+  exportFileName?: string;
+  onFullscreenChange?: (isFullscreen: boolean) => void;
+  onExport?: (pngDataUrl: string) => void;
   onFilter?: () => void;
   onRemove?: () => void;
   filtersApplied?: string[];
@@ -44,7 +48,8 @@ export function ChartWrapper({
   isLoading,
   isEmpty,
   children,
-  onFullscreen,
+  exportFileName,
+  onFullscreenChange,
   onExport,
   onFilter,
   onRemove,
@@ -52,6 +57,36 @@ export function ChartWrapper({
   className,
 }: ChartWrapperProps) {
   const [isFullscreen, setIsFullscreen] = React.useState(false);
+  const contentRef = React.useRef<HTMLDivElement>(null);
+
+  const handleToggleFullscreen = React.useCallback(() => {
+    setIsFullscreen((prev) => {
+      const next = !prev;
+      onFullscreenChange?.(next);
+      return next;
+    });
+  }, [onFullscreenChange]);
+
+  const handleExport = React.useCallback(async () => {
+    if (!contentRef.current) return;
+    const fileSafeTitle = (exportFileName || title || 'chart')
+      .trim()
+      .replace(/[^\w\-]+/g, '_')
+      .slice(0, 80);
+
+    const dataUrl = await toPng(contentRef.current, {
+      cacheBust: true,
+      pixelRatio: 2,
+      backgroundColor: 'transparent',
+    });
+
+    onExport?.(dataUrl);
+
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    link.download = `${fileSafeTitle}.png`;
+    link.click();
+  }, [exportFileName, onExport, title]);
 
   if (isLoading) {
     return (
@@ -80,7 +115,7 @@ export function ChartWrapper({
   }
 
   const content = (
-    <Card className={cn('relative overflow-hidden', isFullscreen && 'fixed inset-4 z-50', className)}>
+    <Card className={cn('relative overflow-hidden', className)}>
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between">
           <div className="flex-1 min-w-0">
@@ -104,16 +139,24 @@ export function ChartWrapper({
                 <Filter className="h-4 w-4" />
               </Button>
             )}
-            {onFullscreen && (
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setIsFullscreen(!isFullscreen)}>
-                <Maximize2 className="h-4 w-4" />
-              </Button>
-            )}
-            {onExport && (
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onExport}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={handleToggleFullscreen}
+              aria-label={isFullscreen ? 'Sair do fullscreen' : 'Fullscreen'}
+            >
+              {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={handleExport}
+              aria-label="Exportar PNG"
+            >
                 <Download className="h-4 w-4" />
-              </Button>
-            )}
+            </Button>
             {onRemove && (
               <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onRemove}>
                 <X className="h-4 w-4" />
@@ -141,6 +184,7 @@ export function ChartWrapper({
           animate={{ opacity: 1 }}
           transition={{ duration: 0.5 }}
           className="w-full"
+          ref={contentRef}
         >
           {children}
         </motion.div>
@@ -160,9 +204,3 @@ export function ChartWrapper({
 
   return content;
 }
-
-function cn(...classes: Array<string | undefined | false>) {
-  return classes.filter(Boolean).join(' ');
-}
-
-export { cn };

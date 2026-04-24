@@ -167,13 +167,20 @@ class IngestionService:
                 infer_schema_length=0,
                 null_values=["", "NULL", "null", "NA", "N/A", "#N/A"],
             )
-            return {"data": frame}
+            return {"data": self._normalize_tabular_frame(frame)}
 
         if file_format in {"xlsx", "xls", "xlsm", "ods"}:
             if file_format in {"xlsx", "xlsm"}:
                 workbook = load_workbook(file_path, read_only=True, data_only=False)
                 sheet_names = list(workbook.sheetnames)
                 workbook.close()
+            elif file_format == "xls":
+                # .xls (BIFF) nao e compatível com openpyxl; usa xlrd para listar abas
+                try:
+                    excel = pd.ExcelFile(file_path, engine="xlrd")
+                    sheet_names = list(excel.sheet_names)
+                except Exception:
+                    sheet_names = ["data"]
             else:
                 sheet_names = ["data"]
 
@@ -187,15 +194,96 @@ class IngestionService:
                         infer_schema_length=0,
                     )
                 except Exception:
-                    fallback = pd.read_excel(file_path, sheet_name=sheet_name, engine="openpyxl", dtype=str)
+                    engine = "xlrd" if file_format == "xls" else "openpyxl"
+                    fallback = pd.read_excel(file_path, sheet_name=sheet_name, engine=engine, dtype=str)
                     sheets[sheet_name] = pl.from_pandas(fallback.fillna(value=""))
-            return sheets
+            return {name: self._normalize_tabular_frame(df) for name, df in sheets.items()}
 
         if file_format == "xlsb":
             frame_pd = pd.read_excel(file_path, engine="pyxlsb", dtype=str)
-            return {"data": pl.from_pandas(frame_pd.fillna(value=""))}
+            return {"data": self._normalize_tabular_frame(pl.from_pandas(frame_pd.fillna(value="")))}
 
         raise UnsupportedFormatException(f"Formato nao implementado para leitura primaria: {file_format}")
+
+    def _normalize_tabular_frame(self, frame: pl.DataFrame) -> pl.DataFrame:
+        """Promove linha de cabecalho quando o reader gera colunas Unnamed:* (Excel com titulos/linhas em branco)."""
+        if frame.width == 0 or frame.height == 0:
+            return frame
+
+        columns = [str(c) for c in frame.columns]
+        unnamed = sum(1 for name in columns if name.lower().startswith("unnamed"))
+        if unnamed / max(len(columns), 1) < 0.6:
+            return frame
+
+        header_idx = self._detect_header_row_index(frame)
+        if header_idx is None:
+            return frame
+
+        header_values = frame.row(header_idx)
+        new_names: list[str] = []
+        for idx, value in enumerate(header_values):
+            text = str(value).strip() if value is not None else ""
+            if text == "" or text.lower() == "nan":
+                new_names.append(f"col_{idx}")
+            else:
+                new_names.append(text)
+
+        new_names = self._dedupe_column_names(new_names)
+
+        trimmed = frame.slice(header_idx + 1, max(0, frame.height - (header_idx + 1)))
+        if trimmed.height == 0:
+            return frame
+
+        trimmed = trimmed.rename({old: new for old, new in zip(trimmed.columns, new_names)})
+        return trimmed
+
+    def _detect_header_row_index(self, frame: pl.DataFrame) -> Optional[int]:
+        max_scan = min(15, frame.height)
+        best_idx: Optional[int] = None
+        best_score = -1.0
+
+        for idx in range(max_scan):
+            row = frame.row(idx)
+            texts: list[str] = []
+            for value in row:
+                if value is None:
+                    texts.append("")
+                    continue
+                text = str(value).strip()
+                if text.lower() == "nan":
+                    text = ""
+                texts.append(text)
+
+            non_empty = [t for t in texts if t != ""]
+            if len(non_empty) < 3:
+                continue
+
+            unique_ratio = len(set(non_empty)) / len(non_empty)
+            fill_ratio = len(non_empty) / max(len(texts), 1)
+
+            numeric_hits = 0
+            for t in non_empty[: min(30, len(non_empty))]:
+                if _INT_RE.match(t) or _FLOAT_RE.match(t):
+                    numeric_hits += 1
+            numeric_ratio = numeric_hits / max(min(30, len(non_empty)), 1)
+
+            score = (unique_ratio * 1.2) + (fill_ratio * 0.8) - (numeric_ratio * 1.1)
+            if score > best_score:
+                best_score = score
+                best_idx = idx
+
+        return best_idx
+
+    def _dedupe_column_names(self, names: list[str]) -> list[str]:
+        seen: dict[str, int] = {}
+        result: list[str] = []
+        for name in names:
+            base = name or "col"
+            count = seen.get(base, 0)
+            final_name = base if count == 0 else f"{base}_{count}"
+            seen[base] = count + 1
+            result.append(final_name)
+        return result
 
     async def _read_secondary_xlsx(self, file_path: Path) -> dict[str, dict[str, Any]]:
         workbook = load_workbook(file_path, read_only=False, data_only=False)

@@ -32,6 +32,15 @@ AsyncSessionLocal = async_sessionmaker(
 async def get_db():
     """Dependency para obter sessao do banco."""
     async with AsyncSessionLocal() as session:
+        # Antes de entregar a sessao para o endpoint, garante que conecta.
+        try:
+            await session.execute(text("SELECT 1"))
+        except Exception:
+            # Permite modo local sem Postgres/DB (persistência via filesystem)
+            logger.exception("Banco indisponivel; usando modo local sem DB")
+            yield None
+            return
+
         try:
             yield session
         finally:

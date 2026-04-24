@@ -239,8 +239,12 @@ class AnalyticsService:
             for m_col in metric_columns:
                 if aggregation == "distinct":
                     agg_metrics.append(f'{agg}("{m_col}")) AS "{m_col}"')
-                else:
+                elif aggregation == "count":
                     agg_metrics.append(f'{agg}("{m_col}") AS "{m_col}"')
+                else:
+                    # DuckDB pode ter colunas numericas como VARCHAR (ex: CSV).
+                    # TRY_CAST evita falha e torna agregacao robusta.
+                    agg_metrics.append(f'{agg}(TRY_CAST("{m_col}" AS DOUBLE)) AS "{m_col}"')
 
             select_cols = dims + agg_metrics
             group_by = f"GROUP BY {', '.join(dims)}" if dims else ""

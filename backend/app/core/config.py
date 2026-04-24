@@ -47,7 +47,12 @@ class Settings(BaseSettings):
     DUCKDB_PATH: str = "/app/storage/analytics.db"
 
     # Segurança
-    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
     CORS_ALLOW_CREDENTIALS: bool = True
 
     # Migrations
