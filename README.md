@@ -154,6 +154,27 @@ npm run dev
 
 Documentação completa em: `http://localhost:8000/docs` (Swagger/OpenAPI)
 
+### Teste rapido de upload (curl)
+
+```bash
+# Upload CSV (deve retornar status=pending e file_uuid)
+curl -X POST "http://localhost:8000/upload" \
+	-F "file=@data/samples/vendas_rh.csv" \
+	-F "strict_mode=false"
+
+# Verificar status
+curl "http://localhost:8000/upload/<FILE_UUID>/status"
+```
+
+### Teste no Postman
+
+1. Metodo: POST
+2. URL: `http://localhost:8000/upload`
+3. Body: form-data
+4. Campo `file`: tipo File (CSV/XLSX/TSV/ODS)
+5. Campo `strict_mode`: `true` ou `false`
+6. Enviar e validar retorno com `file_uuid`, `file_size_bytes` e `status=pending`
+
 ---
 
 ## Heurísticas de Sugestão de Gráficos

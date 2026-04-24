@@ -1,6 +1,9 @@
-"""Configuração de logging estruturado."""
+"""Configuracao de logging estruturado."""
+from __future__ import annotations
+
 import logging
 import sys
+
 from pythonjsonlogger import jsonlogger
 
 
@@ -8,6 +11,10 @@ def setup_logging() -> logging.Logger:
     """Configura logging JSON estruturado para auditoria."""
     logger = logging.getLogger("datavision")
     logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+    if logger.handlers:
+        return logger
 
     handler = logging.StreamHandler(sys.stdout)
     formatter = jsonlogger.JsonFormatter(

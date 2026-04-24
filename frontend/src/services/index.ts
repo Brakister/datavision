@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { AxiosProgressEvent } from 'axios';
 import type {
   UploadResponse,
   FileMetadata,
@@ -45,7 +46,8 @@ export const uploadService = {
     file: File,
     strictMode: boolean = false,
     encoding?: string,
-    delimiter?: string
+    delimiter?: string,
+    onProgress?: (progress: number) => void
   ): Promise<UploadResponse> => {
     const formData = new FormData();
     formData.append('file', file);
@@ -56,6 +58,11 @@ export const uploadService = {
     const response = await api.post<UploadResponse>('/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 300000, // 5 min para arquivos grandes
+      onUploadProgress: (event: AxiosProgressEvent) => {
+        if (!onProgress || !event.total) return;
+        const progress = Math.min(100, Math.round((event.loaded * 100) / event.total));
+        onProgress(progress);
+      },
     });
     return response.data;
   },

@@ -18,6 +18,7 @@ ColumnType = Literal[
 	"datetime",
 	"categorical",
 	"mixed",
+	"empty",
 ]
 
 FileStatus = Literal["pending", "processing", "completed", "inconsistent", "failed"]
@@ -45,13 +46,21 @@ class SheetMetadata(BaseModel):
 class IntegrityReport(BaseModel):
 	total_sheets: int
 	total_rows: int
-	total_columns: int
+	total_columns: int = 0
 	cells_read: int = 0
 	empty_cells: int = 0
+	columns_by_type: dict[str, int] = Field(default_factory=dict)
+	mixed_type_columns: list[str] = Field(default_factory=list)
+	formulas_detected: int = 0
+	merged_cells_detected: int = 0
+	file_hash: str = ""
 	file_hash_sha256: str
+	sheet_hashes: dict[str, str] = Field(default_factory=dict)
 	engines_used: list[str] = Field(default_factory=list)
+	engine_divergences: list[dict[str, Any]] = Field(default_factory=list)
 	warnings: list[str] = Field(default_factory=list)
 	errors: list[str] = Field(default_factory=list)
+	strict_mode_blocked: bool = False
 
 
 class ProcessingProgress(BaseModel):

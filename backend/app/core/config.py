@@ -1,11 +1,17 @@
-"""Configurações centralizadas da aplicação."""
-import os
+"""Configuracoes centralizadas da aplicacao."""
 from functools import lru_cache
-from pydantic_settings import BaseSettings
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Configurações da aplicação carregadas de variáveis de ambiente."""
+    """Configuracoes da aplicacao carregadas de variaveis de ambiente."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        extra="ignore",
+    )
 
     # Aplicação
     APP_NAME: str = "DataVision"
@@ -18,6 +24,8 @@ class Settings(BaseSettings):
 
     # Banco de dados
     DATABASE_URL: str = "postgresql+asyncpg://datavision:datavision@postgres:5432/datavision"
+    DATABASE_POOL_SIZE: int = 10
+    DATABASE_MAX_OVERFLOW: int = 20
 
     # Redis
     REDIS_URL: str = "redis://redis:6379/0"
@@ -40,13 +48,13 @@ class Settings(BaseSettings):
 
     # Segurança
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    CORS_ALLOW_CREDENTIALS: bool = True
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    # Migrations
+    AUTO_RUN_MIGRATIONS: bool = True
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
-    """Retorna instância cacheada das configurações."""
+    """Retorna instancia cacheada das configuracoes."""
     return Settings()

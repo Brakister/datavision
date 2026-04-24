@@ -4,6 +4,7 @@ import { AppLayout } from '@/components/layout/app-layout';
 import { ChartsPage } from '@/pages/charts-page';
 import { TablePage } from '@/pages/table-page';
 import { FiltersPage } from '@/pages/filters-page';
+import { UploadPage } from '@/pages/upload-page';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -21,7 +22,9 @@ function App() {
       <BrowserRouter>
         <AppLayout>
           <Routes>
-            <Route path="/" element={<ChartsPage />} />
+            <Route path="/" element={<UploadPage />} />
+            <Route path="/upload" element={<UploadPage />} />
+            <Route path="/dashboard" element={<ChartsPage />} />
             <Route path="/charts" element={<ChartsPage />} />
             <Route path="/table" element={<TablePage />} />
             <Route path="/filters" element={<FiltersPage />} />

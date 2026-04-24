@@ -17,22 +17,22 @@ export function Header() {
   const { theme, toggleTheme, toggleSidebar, currentFile, activeFilters } = useAppStore();
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <header className="sticky top-0 z-40 w-full border-b border-border/80 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70">
       <div className="flex h-14 items-center px-4 gap-4">
         <Button variant="ghost" size="icon" onClick={toggleSidebar} className="shrink-0">
           <Menu className="h-5 w-5" />
         </Button>
 
         <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
-            <FileSpreadsheet className="h-5 w-5 text-primary" />
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10">
+            <FileSpreadsheet className="h-5 w-5 text-emerald-500" />
           </div>
           <span className="font-bold text-lg tracking-tight hidden sm:inline">DataVision</span>
         </div>
 
         <Separator orientation="vertical" className="h-6" />
 
-        {currentFile && (
+        {currentFile ? (
           <motion.div
             initial={{ opacity: 0, x: -10 }}
             animate={{ opacity: 1, x: 0 }}
@@ -56,6 +56,8 @@ export function Header() {
               </Badge>
             )}
           </motion.div>
+        ) : (
+          <div className="text-sm text-muted-foreground">Nenhum arquivo carregado</div>
         )}
 
         <div className="ml-auto flex items-center gap-2">

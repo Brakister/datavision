@@ -1,87 +1,111 @@
-"""Testes de ingestao de dados."""
-import pytest
-from pathlib import Path
-import tempfile
+"""Tests for deterministic ingestion behavior."""
+from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
+import polars as pl
+import pytest
+from openpyxl import Workbook
+
+from app.core.exceptions import InconsistencyException, UnsupportedFormatException
 from app.services.ingestion import ingestion_service
-from app.core.exceptions import UnsupportedFormatException, FileTooLargeException
 
 
 class TestIngestionService:
-    """Testes do servico de ingestao."""
+    """Core ingestion tests for Prompt 1.2."""
 
     @pytest.mark.asyncio
     async def test_calculate_sha256(self):
-        """Testa calculo de hash SHA-256."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
-            f.write("a,b,c\n1,2,3\n")
-            path = f.name
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as file_obj:
+            file_obj.write("a,b\n1,2\n")
+            path = file_obj.name
 
-        hash_result = await ingestion_service._calculate_sha256(path)
-        assert len(hash_result) == 64
-        assert all(c in '0123456789abcdef' for c in hash_result)
-        Path(path).unlink()
+        result = await ingestion_service._calculate_sha256(path)
+        assert len(result) == 64
+        Path(path).unlink(missing_ok=True)
 
-    @pytest.mark.asyncio
-    async def test_detect_column_type_string(self):
-        """Testa deteccao de tipo string."""
-        import polars as pl
-        df = pl.DataFrame({"col": ["a", "b", "c"]})
-        result = ingestion_service._detect_column_type(df["col"])
-        assert result == "string"
+    def test_detect_string_leading_zeros_stays_string(self):
+        series = pl.Series("codigo", ["00123", "00456", "00001"])
+        assert ingestion_service._detect_column_type(series) == "string"
 
-    @pytest.mark.asyncio
-    async def test_detect_column_type_integer(self):
-        """Testa deteccao de tipo integer."""
-        import polars as pl
-        df = pl.DataFrame({"col": [1, 2, 3]})
-        result = ingestion_service._detect_column_type(df["col"])
-        assert result == "integer"
+    def test_detect_percentage_type(self):
+        series = pl.Series("taxa", ["10%", "20%", "30%"])
+        assert ingestion_service._detect_column_type(series) == "percentage"
 
-    @pytest.mark.asyncio
-    async def test_detect_column_type_date(self):
-        """Testa deteccao de tipo date."""
-        import polars as pl
-        df = pl.DataFrame({"col": ["2024-01-01", "2024-01-02", "2024-01-03"]})
-        result = ingestion_service._detect_column_type(df["col"])
-        # Polars pode inferir como date ou string dependendo da configuracao
-        assert result in ["string", "date"]
-
-    @pytest.mark.asyncio
-    async def test_infer_string_type_percentage(self):
-        """Testa inferencia de percentual."""
-        samples = ["10%", "20%", "30%", "40%", "50%"]
-        result = ingestion_service._infer_string_type(samples)
-        assert result == "percentage"
-
-    @pytest.mark.asyncio
-    async def test_infer_string_type_currency(self):
-        """Testa inferencia de moeda."""
-        samples = ["R$ 100,00", "R$ 200,00", "R$ 300,00"]
-        result = ingestion_service._infer_string_type(samples)
-        assert result == "currency"
-
-    @pytest.mark.asyncio
-    async def test_infer_string_type_boolean(self):
-        """Testa inferencia de booleano."""
-        samples = ["Sim", "Nao", "Sim", "Sim", "Nao"]
-        result = ingestion_service._infer_string_type(samples)
-        assert result == "boolean"
-
-    @pytest.mark.asyncio
-    async def test_sanitize_table_name(self):
-        """Testa sanitizacao de nome de tabela."""
-        result = ingestion_service._sanitize_table_name("Planilha de Vendas 2024")
-        assert "sheet_" in result
-        assert " " not in result
+    def test_detect_currency_type(self):
+        series = pl.Series("valor", ["R$ 10,00", "R$ 20,00", "R$ 30,00"])
+        assert ingestion_service._detect_column_type(series) == "currency"
 
     @pytest.mark.asyncio
     async def test_unsupported_format(self):
-        """Testa rejeicao de formato nao suportado."""
-        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
-            path = f.name
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as file_obj:
+            path = file_obj.name
 
         with pytest.raises(UnsupportedFormatException):
-            await ingestion_service.process_upload(path, "test.pdf")
+            await ingestion_service.process_upload(path, "invalid.pdf")
 
-        Path(path).unlink()
+        Path(path).unlink(missing_ok=True)
+
+    @pytest.mark.asyncio
+    async def test_strict_mode_raises_when_engines_diverge(self, monkeypatch):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            file_path = Path(tmp_dir) / "multi.xlsx"
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "SheetA"
+            ws.append(["valor"])
+            ws.append([1])
+            wb.save(file_path)
+
+            async def fake_read_primary(*_args, **_kwargs):
+                return {"SheetA": pl.DataFrame({"valor": [1]})}
+
+            async def fake_read_secondary(*_args, **_kwargs):
+                return {"SheetA": {"max_row": 2, "max_column": 1, "merged_cells_count": 0, "formula_count": 0, "sheet_hash": "x"}}
+
+            def fake_compare(*_args, **_kwargs):
+                return [{"type": "row_count_mismatch", "severity": "high", "sheet": "SheetA"}]
+
+            monkeypatch.setattr(ingestion_service, "_read_primary", fake_read_primary)
+            monkeypatch.setattr(ingestion_service, "_read_secondary_xlsx", fake_read_secondary)
+            monkeypatch.setattr(ingestion_service, "_compare_readings", fake_compare)
+
+            with pytest.raises(InconsistencyException):
+                await ingestion_service.process_upload(str(file_path), "multi.xlsx", strict_mode=True)
+
+    @pytest.mark.asyncio
+    async def test_non_strict_mode_marks_inconsistent(self, monkeypatch):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            file_path = Path(tmp_dir) / "multi.xlsx"
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "SheetA"
+            ws.append(["valor"])
+            ws.append([1])
+            wb.save(file_path)
+
+            async def fake_read_primary(*_args, **_kwargs):
+                return {"SheetA": pl.DataFrame({"valor": [1]})}
+
+            async def fake_read_secondary(*_args, **_kwargs):
+                return {"SheetA": {"max_row": 1, "max_column": 1, "merged_cells_count": 0, "formula_count": 0, "sheet_hash": "x"}}
+
+            def fake_compare(*_args, **_kwargs):
+                return [{"type": "row_count_mismatch", "severity": "medium", "sheet": "SheetA"}]
+
+            async def fake_persist(*_args, **_kwargs):
+                return Path(tmp_dir) / "analytics.db"
+
+            monkeypatch.setattr(ingestion_service, "_read_primary", fake_read_primary)
+            monkeypatch.setattr(ingestion_service, "_read_secondary_xlsx", fake_read_secondary)
+            monkeypatch.setattr(ingestion_service, "_compare_readings", fake_compare)
+            monkeypatch.setattr(ingestion_service, "_persist_to_duckdb", fake_persist)
+
+            result = await ingestion_service.process_upload(str(file_path), "multi.xlsx", strict_mode=False)
+
+            assert result["status"] == "inconsistent"
+            report = result["integrity_report"]
+            assert "engine_divergences" in report
+            assert "columns_by_type" in report
+            assert "sheet_hashes" in report

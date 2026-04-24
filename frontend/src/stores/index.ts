@@ -51,7 +51,9 @@ interface AppState {
 
   // Sidebar
   sidebarCollapsed: boolean;
+  mobileSidebarOpen: boolean;
   toggleSidebar: () => void;
+  setMobileSidebarOpen: (open: boolean) => void;
 
   // Loading global
   isLoading: boolean;
@@ -130,7 +132,16 @@ export const useAppStore = create<AppState>()(
         setChartSuggestions: (suggestions) => set({ chartSuggestions: suggestions }),
 
         sidebarCollapsed: false,
-        toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+        mobileSidebarOpen: false,
+        toggleSidebar: () =>
+          set((state) => {
+            const isMobile = typeof window !== 'undefined' && window.innerWidth < 1024;
+            if (isMobile) {
+              return { mobileSidebarOpen: !state.mobileSidebarOpen };
+            }
+            return { sidebarCollapsed: !state.sidebarCollapsed };
+          }),
+        setMobileSidebarOpen: (open) => set({ mobileSidebarOpen: open }),
 
         isLoading: false,
         setIsLoading: (loading) => set({ isLoading: loading }),
@@ -155,6 +166,7 @@ export const useAppStore = create<AppState>()(
           savedPresets: state.savedPresets,
           savedLayouts: state.savedLayouts,
           sidebarCollapsed: state.sidebarCollapsed,
+          mobileSidebarOpen: state.mobileSidebarOpen,
         }),
       }
     )

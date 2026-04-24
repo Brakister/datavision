@@ -4,9 +4,11 @@ TODA a lógica é determinística e auditável. Nenhuma IA é utilizada.
 """
 from datetime import datetime
 from pathlib import Path
+import re
 from typing import Any, Optional
 
 import duckdb
+import pandas as pd
 import polars as pl
 
 from app.core.config import get_settings
@@ -15,6 +17,11 @@ from app.schemas import ChartSuggestion, ColumnSchema, ColumnType
 
 
 settings = get_settings()
+
+_PERCENT_RE = re.compile(r"^[-+]?\d+(?:[\.,]\d+)?\s*%$")
+_CURRENCY_RE = re.compile(r"^(?:R\$|\$|€|£|¥)\s*[-+]?\d+(?:[\.,]\d+)?$")
+_INT_RE = re.compile(r"^[-+]?\d+$")
+_FLOAT_RE = re.compile(r"^[-+]?\d+[\.,]\d+$")
 
 
 class AnalyticsService:
@@ -351,29 +358,41 @@ class AnalyticsService:
         for idx, row in schema_df.iterrows():
             col_name = row["column_name"]
             col_type = row["column_type"]
+            quoted_col = f'"{col_name}"'
 
             try:
-                stats_query = f'SELECT COUNT(*) as total, COUNT(DISTINCT "{col_name}") as unique_count FROM {table_name}'
-                stats = conn.execute(stats_query).fetchone()
-                total, unique_count = stats
-                null_count = total - unique_count  # Aproximacao
+                stats_query = (
+                    f"SELECT "
+                    f"COUNT(*) as total, "
+                    f"COUNT(*) FILTER (WHERE {quoted_col} IS NULL) as null_count, "
+                    f"COUNT(DISTINCT {quoted_col}) as unique_count "
+                    f"FROM {table_name}"
+                )
+                total, null_count, unique_count = conn.execute(stats_query).fetchone()
                 cardinality = unique_count
-            except:
+                samples_df = conn.execute(
+                    f"SELECT {quoted_col} FROM {table_name} WHERE {quoted_col} IS NOT NULL LIMIT 50"
+                ).fetchdf()
+                samples = [str(v) for v in samples_df[col_name].tolist()]
+            except Exception:
                 total = 0
                 unique_count = 0
                 null_count = 0
                 cardinality = 0
+                samples = []
 
             detected_type = self._map_duckdb_type(col_type)
+            if detected_type == "string":
+                detected_type = self._infer_string_type(samples)
 
             col_schema = ColumnSchema(
                 name=col_name,
                 index=idx,
                 detected_type=detected_type,
-                null_count=null_count,
-                unique_count=unique_count,
-                cardinality=cardinality,
-                sample_values=[],
+                null_count=int(null_count),
+                unique_count=int(unique_count),
+                cardinality=int(cardinality),
+                sample_values=samples[:10],
             )
             columns.append(col_schema)
 
@@ -399,6 +418,45 @@ class AnalyticsService:
             return "datetime"
         else:
             return "mixed"
+
+    def _infer_string_type(self, samples: list[str]) -> ColumnType:
+        """Infere tipos especiais em colunas string de forma deterministica."""
+        if not samples:
+            return "empty"
+
+        lowered = [s.strip().lower() for s in samples if s.strip()]
+        if not lowered:
+            return "empty"
+
+        if all(_PERCENT_RE.match(s.strip()) for s in samples if s.strip()):
+            return "percentage"
+        if all(_CURRENCY_RE.match(s.strip()) for s in samples if s.strip()):
+            return "currency"
+
+        bool_values = {"true", "false", "yes", "no", "sim", "nao", "1", "0"}
+        if all(v in bool_values for v in lowered):
+            return "boolean"
+
+        date_hits = sum(1 for s in samples if self._looks_like_date(s))
+        if date_hits / len(samples) >= 0.85:
+            return "date"
+
+        int_hits = sum(1 for s in samples if _INT_RE.match(s.strip()))
+        float_hits = sum(1 for s in samples if _FLOAT_RE.match(s.strip()))
+        if int_hits == len(samples):
+            return "integer"
+        if int_hits + float_hits == len(samples) and float_hits > 0:
+            return "float"
+
+        uniq_ratio = len(set(lowered)) / len(lowered)
+        if len(set(lowered)) <= 50 and uniq_ratio <= 0.2:
+            return "categorical"
+
+        return "string"
+
+    def _looks_like_date(self, value: str) -> bool:
+        parsed = pd.to_datetime(value, errors="coerce", dayfirst=True)
+        return not pd.isna(parsed)
 
     def _sanitize_table_name(self, name: str) -> str:
         """Sanitiza nome para SQL."""
