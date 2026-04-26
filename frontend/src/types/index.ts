@@ -12,7 +12,7 @@ export type ColumnType =
   | 'mixed'
   | 'empty';
 
-export type FileStatus = 'pending' | 'processing' | 'completed' | 'error' | 'inconsistent';
+export type FileStatus = 'pending' | 'processing' | 'completed' | 'error' | 'inconsistent' | 'failed';
 
 export type FileFormat = 'xlsx' | 'xls' | 'xlsm' | 'xlsb' | 'csv' | 'tsv' | 'ods';
 
@@ -232,16 +232,16 @@ export interface ProcessingProgress {
   file_uuid: string;
   status: FileStatus;
   stage: string;
-  progress_percent: number;
-  current_sheet: string | null;
-  sheets_processed: number;
-  total_sheets: number;
-  rows_processed: number;
-  total_rows: number;
+  progress: number;
   message: string;
-  started_at: string;
-  estimated_completion: string | null;
-  error: string | null;
+  current_sheet?: string | null;
+  sheets_processed?: number;
+  total_sheets?: number;
+  rows_processed?: number;
+  total_rows?: number;
+  started_at?: string;
+  estimated_completion?: string | null;
+  error?: string | null;
 }
 
 export interface UploadResponse {

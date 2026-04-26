@@ -7,8 +7,9 @@ from pathlib import Path
 import polars as pl
 import pytest
 from openpyxl import Workbook
+from openpyxl.styles import PatternFill
 
-from app.core.exceptions import InconsistencyException, UnsupportedFormatException
+from app.core.exceptions import UnsupportedFormatException
 from app.services.ingestion import ingestion_service
 
 
@@ -37,6 +38,20 @@ class TestIngestionService:
         series = pl.Series("valor", ["R$ 10,00", "R$ 20,00", "R$ 30,00"])
         assert ingestion_service._detect_column_type(series) == "currency"
 
+    def test_effective_sheet_bounds_ignore_formatted_padding_cells(self):
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "SheetA"
+        worksheet.append(["valor", "descricao"])
+        worksheet.append([1, "A"])
+        worksheet.append([2, "B"])
+        worksheet["Z50"].fill = PatternFill(fill_type="solid", fgColor="FFFF00")
+
+        rows, columns = ingestion_service._get_effective_sheet_bounds(worksheet)
+
+        assert rows == 2
+        assert columns == 2
+
     @pytest.mark.asyncio
     async def test_unsupported_format(self):
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as file_obj:
@@ -48,7 +63,7 @@ class TestIngestionService:
         Path(path).unlink(missing_ok=True)
 
     @pytest.mark.asyncio
-    async def test_strict_mode_raises_when_engines_diverge(self, monkeypatch):
+    async def test_strict_mode_marks_inconsistent_without_blocking(self, monkeypatch):
         with tempfile.TemporaryDirectory() as tmp_dir:
             file_path = Path(tmp_dir) / "multi.xlsx"
             wb = Workbook()
@@ -67,12 +82,20 @@ class TestIngestionService:
             def fake_compare(*_args, **_kwargs):
                 return [{"type": "row_count_mismatch", "severity": "high", "sheet": "SheetA"}]
 
+            async def fake_persist(*_args, **_kwargs):
+                return Path(tmp_dir) / "analytics.db"
+
             monkeypatch.setattr(ingestion_service, "_read_primary", fake_read_primary)
             monkeypatch.setattr(ingestion_service, "_read_secondary_xlsx", fake_read_secondary)
             monkeypatch.setattr(ingestion_service, "_compare_readings", fake_compare)
+            monkeypatch.setattr(ingestion_service, "_persist_to_duckdb", fake_persist)
 
-            with pytest.raises(InconsistencyException):
-                await ingestion_service.process_upload(str(file_path), "multi.xlsx", strict_mode=True)
+            result = await ingestion_service.process_upload(str(file_path), "multi.xlsx", strict_mode=True)
+
+            assert result["status"] == "inconsistent"
+            assert result["strict_mode"] is True
+            assert result["integrity_report"]["strict_mode_blocked"] is True
+            assert result["duckdb_path"]
 
     @pytest.mark.asyncio
     async def test_non_strict_mode_marks_inconsistent(self, monkeypatch):

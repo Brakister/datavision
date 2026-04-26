@@ -6,7 +6,8 @@ export function useChartData(
   fileUuid: string | null,
   sheetName: string | null,
   suggestion: ChartSuggestion | null,
-  filters?: Record<string, unknown>
+  filters?: Record<string, unknown>,
+  enabled: boolean = true
 ) {
   return useQuery({
     queryKey: ['chart-data', fileUuid, sheetName, suggestion, filters],
@@ -21,7 +22,7 @@ export function useChartData(
         filters: filters || {},
         limit: 1000,
       }),
-    enabled: !!fileUuid && !!sheetName && !!suggestion,
+    enabled: !!fileUuid && !!sheetName && !!suggestion && enabled,
     staleTime: 1000 * 60 * 2,
   });
 }

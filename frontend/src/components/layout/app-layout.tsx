@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useAppStore } from '@/stores';
+import { uploadService } from '@/services';
 import { Header } from './header';
 import { Sidebar } from './sidebar';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -11,10 +13,42 @@ interface AppLayoutProps {
 
 export function AppLayout({ children }: AppLayoutProps) {
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
+  const uploadSession = useAppStore((s) => s.uploadSession);
+  const updateUploadSession = useAppStore((s) => s.updateUploadSession);
   const location = useLocation();
   const [isDesktop, setIsDesktop] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 1024 : true
   );
+
+  const uploadStatusQuery = useQuery({
+    queryKey: ['upload-status', uploadSession?.fileUuid],
+    queryFn: () => uploadService.getStatus(uploadSession!.fileUuid!),
+    enabled:
+      !!uploadSession?.fileUuid &&
+      uploadSession.status !== 'completed' &&
+      uploadSession.status !== 'inconsistent' &&
+      uploadSession.status !== 'failed',
+    refetchInterval:
+      uploadSession?.fileUuid &&
+      uploadSession.status !== 'completed' &&
+      uploadSession.status !== 'inconsistent' &&
+      uploadSession.status !== 'failed'
+        ? 1500
+        : false,
+    retry: 0,
+  });
+
+  useEffect(() => {
+    if (!uploadStatusQuery.data) return;
+
+    updateUploadSession({
+      status: uploadStatusQuery.data.status,
+      stage: uploadStatusQuery.data.stage,
+      progress: uploadStatusQuery.data.progress,
+      message: uploadStatusQuery.data.message,
+      updatedAt: new Date().toISOString(),
+    });
+  }, [uploadStatusQuery.data, updateUploadSession]);
 
   useEffect(() => {
     const onResize = () => setIsDesktop(window.innerWidth >= 1024);

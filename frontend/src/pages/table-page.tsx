@@ -9,14 +9,17 @@ import { Skeleton } from '@/components/ui/skeleton';
 
 import { useFileMetadata } from '@/hooks/use-file-metadata';
 import { useTableData } from '@/hooks/use-table-data';
+import { useFileNavigation } from '@/hooks/use-file-navigation';
 import { useAppStore } from '@/stores';
+import { FilterPanel } from '@/components/filters/filter-panel';
 
 export function TablePage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const fileUuid = searchParams.get('file');
+  const { buildPath } = useFileNavigation();
 
-  const { selectedSheet, setSelectedSheet, setCurrentFile } = useAppStore();
+  const { selectedSheet, setSelectedSheet, setCurrentFile, activeFilters } = useAppStore();
 
   const metadataQuery = useFileMetadata(fileUuid);
 
@@ -29,7 +32,12 @@ export function TablePage() {
     }
   }, [metadataQuery.data, selectedSheet, setCurrentFile, setSelectedSheet]);
 
-  const tableQuery = useTableData(fileUuid, selectedSheet, 1, 100, []);
+  const tableQuery = useTableData(fileUuid, selectedSheet, 1, 100, activeFilters);
+
+  const activeSheetMeta = React.useMemo(() => {
+    if (!metadataQuery.data || !selectedSheet) return null;
+    return metadataQuery.data.sheets.find((sheet) => sheet.name === selectedSheet) ?? null;
+  }, [metadataQuery.data, selectedSheet]);
 
   const sheetOptions = React.useMemo(() => {
     const sheets = metadataQuery.data?.sheets ?? [];
@@ -79,12 +87,16 @@ export function TablePage() {
               />
             </div>
           )}
-          <Button variant="outline" onClick={() => navigate(`/dashboard?file=${encodeURIComponent(fileUuid)}`)}>
+          <Button variant="outline" onClick={() => navigate(buildPath('/dashboard'))}>
             <ArrowLeft className="h-4 w-4" />
             Voltar ao dashboard
           </Button>
         </div>
       </div>
+
+      {activeSheetMeta && (
+        <FilterPanel columns={activeSheetMeta.columns} affectedRows={tableQuery.data?.total_rows} />
+      )}
 
       {metadataQuery.isError ? (
         <Card>

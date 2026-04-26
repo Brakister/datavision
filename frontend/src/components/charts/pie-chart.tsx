@@ -9,6 +9,7 @@ import {
 } from 'recharts';
 import { ChartWrapper } from './chart-wrapper';
 import type { ChartWrapperProps } from './chart-wrapper';
+import { formatMetricValue } from './value-format';
 
 interface PieChartProps extends Omit<ChartWrapperProps, 'children' | 'chartType'> {
   data: Array<Record<string, unknown>>;
@@ -35,18 +36,33 @@ export function PieChart({
   ...wrapperProps
 }: PieChartProps) {
   const [activeIndex, setActiveIndex] = React.useState<number | null>(null);
+  const [hiddenNames, setHiddenNames] = React.useState<Set<string>>(new Set());
+
+  const visibleData = React.useMemo(
+    () => data.filter((item) => !hiddenNames.has(String(item[nameKey]))),
+    [data, hiddenNames, nameKey]
+  );
+
+  const toggleSlice = React.useCallback((sliceName: string) => {
+    setHiddenNames((prev) => {
+      const next = new Set(prev);
+      if (next.has(sliceName)) next.delete(sliceName);
+      else next.add(sliceName);
+      return next;
+    });
+  }, []);
 
   const CustomTooltip = ({ active, payload }: any) => {
     if (!active || !payload || !payload.length) return null;
     const entry = payload[0];
-    const total = data.reduce((sum, item) => sum + (Number(item[valueKey]) || 0), 0);
+    const total = visibleData.reduce((sum, item) => sum + (Number(item[valueKey]) || 0), 0);
     const percentage = total > 0 ? ((Number(entry.value) / total) * 100).toFixed(1) : '0';
 
     return (
       <div className="rounded-lg border bg-popover p-3 shadow-lg">
         <p className="text-sm font-semibold">{entry.name}</p>
         <p className="text-xs text-muted-foreground mt-1">
-          Valor: {Number(entry.value).toLocaleString()}
+          Valor: {formatMetricValue(entry.value, valueKey)}
         </p>
         <p className="text-xs text-muted-foreground">
           Percentual: {percentage}%
@@ -60,7 +76,7 @@ export function PieChart({
       <ResponsiveContainer width="100%" height={350}>
         <RePieChart>
           <Pie
-            data={data}
+            data={visibleData}
             cx="50%"
             cy="50%"
             innerRadius={donut ? 80 : 0}
@@ -70,12 +86,12 @@ export function PieChart({
             nameKey={nameKey}
             onClick={(_, index) => {
               setActiveIndex(index);
-              onSliceClick?.(data[index]);
+              onSliceClick?.(visibleData[index]);
             }}
             animationDuration={800}
             animationBegin={0}
           >
-            {data.map((_, index) => (
+            {visibleData.map((_, index) => (
               <Cell
                 key={index}
                 fill={colors[index % colors.length]}
@@ -87,9 +103,10 @@ export function PieChart({
           </Pie>
           <Tooltip content={<CustomTooltip />} />
           <Legend
+            onClick={(entry: any) => toggleSlice(String(entry.value))}
             wrapperStyle={{ fontSize: 12 }}
             formatter={(value: string) => (
-              <span className="text-muted-foreground">{value}</span>
+              <span className={hiddenNames.has(value) ? 'text-muted-foreground line-through opacity-60' : 'text-muted-foreground'}>{value}</span>
             )}
           />
         </RePieChart>

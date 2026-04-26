@@ -12,6 +12,7 @@ import {
 } from 'recharts';
 import { ChartWrapper } from './chart-wrapper';
 import type { ChartWrapperProps } from './chart-wrapper';
+import { formatMetricValue } from './value-format';
 
 interface BarChartProps extends Omit<ChartWrapperProps, 'children' | 'chartType'> {
   data: Array<Record<string, unknown>>;
@@ -61,9 +62,7 @@ export function BarChart({
           <div key={idx} className="flex items-center gap-2 text-xs">
             <div className="h-2 w-2 rounded-full" style={{ backgroundColor: entry.color }} />
             <span className="text-muted-foreground">{entry.name}:</span>
-            <span className="font-medium">
-              {typeof entry.value === 'number' ? entry.value.toLocaleString() : entry.value}
-            </span>
+            <span className="font-medium">{formatMetricValue(entry.value, String(entry.name ?? 'valor'))}</span>
           </div>
         ))}
       </div>

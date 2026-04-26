@@ -2,12 +2,25 @@ import { create } from 'zustand';
 import { devtools, persist } from 'zustand/middleware';
 import type {
   FileMetadata,
+  FileStatus,
   FilterOperator,
   FilterPreset,
   DashboardLayout,
   WidgetLayout,
   ChartSuggestion,
 } from '@/types';
+
+type UploadSessionState = {
+  fileUuid: string | null;
+  fileName: string;
+  fileSizeBytes: number;
+  strictMode: boolean;
+  status: 'idle' | FileStatus;
+  stage: string;
+  progress: number;
+  message: string;
+  updatedAt: string | null;
+};
 
 interface AppState {
   // Tema
@@ -21,6 +34,16 @@ interface AppState {
   // Aba selecionada
   selectedSheet: string | null;
   setSelectedSheet: (sheet: string | null) => void;
+
+  // Upload em andamento
+  uploadDraftFile: File | null;
+  setUploadDraftFile: (file: File | null) => void;
+  uploadDraftStrictMode: boolean;
+  setUploadDraftStrictMode: (value: boolean) => void;
+  uploadSession: UploadSessionState | null;
+  setUploadSession: (session: UploadSessionState | null) => void;
+  updateUploadSession: (updates: Partial<NonNullable<UploadSessionState>>) => void;
+  clearUploadSession: () => void;
 
   // Filtros ativos
   activeFilters: FilterOperator[];
@@ -82,6 +105,20 @@ export const useAppStore = create<AppState>()(
 
         selectedSheet: null,
         setSelectedSheet: (sheet) => set({ selectedSheet: sheet }),
+
+        uploadDraftFile: null,
+        setUploadDraftFile: (file) => set({ uploadDraftFile: file }),
+
+        uploadDraftStrictMode: false,
+        setUploadDraftStrictMode: (value) => set({ uploadDraftStrictMode: value }),
+
+        uploadSession: null,
+        setUploadSession: (session) => set({ uploadSession: session }),
+        updateUploadSession: (updates) =>
+          set((state) => ({
+            uploadSession: state.uploadSession ? { ...state.uploadSession, ...updates } : state.uploadSession,
+          })),
+        clearUploadSession: () => set({ uploadSession: null, uploadDraftFile: null, uploadDraftStrictMode: false }),
 
         activeFilters: [],
         addFilter: (filter) =>
@@ -163,8 +200,12 @@ export const useAppStore = create<AppState>()(
         name: 'datavision-store',
         partialize: (state) => ({
           theme: state.theme,
+          currentFile: state.currentFile,
+          selectedSheet: state.selectedSheet,
+          uploadDraftStrictMode: state.uploadDraftStrictMode,
           savedPresets: state.savedPresets,
           savedLayouts: state.savedLayouts,
+          uploadSession: state.uploadSession,
           sidebarCollapsed: state.sidebarCollapsed,
           mobileSidebarOpen: state.mobileSidebarOpen,
         }),

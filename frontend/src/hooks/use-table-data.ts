@@ -7,7 +7,8 @@ export function useTableData(
   sheetName: string | null,
   page: number = 1,
   pageSize: number = 100,
-  filters: FilterOperator[] = []
+  filters: FilterOperator[] = [],
+  enabled: boolean = true
 ) {
   return useQuery({
     queryKey: ['table-data', fileUuid, sheetName, page, pageSize, filters],
@@ -19,7 +20,7 @@ export function useTableData(
         page_size: pageSize,
         filters,
       }),
-    enabled: !!fileUuid && !!sheetName,
+    enabled: !!fileUuid && !!sheetName && enabled,
     staleTime: 1000 * 60 * 2,
   });
 }

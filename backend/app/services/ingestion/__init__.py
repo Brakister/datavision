@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import re
 import shutil
 import uuid
 from datetime import datetime, timezone
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Optional
 
@@ -54,9 +56,18 @@ class IngestionService:
         preferred_date_format: Optional[str] = None,
         encoding: Optional[str] = None,
         delimiter: Optional[str] = None,
+        progress_callback: Callable[[str, int, str], Awaitable[None] | None] | None = None,
     ) -> dict[str, Any]:
         """Process a file and produce deterministic metadata and integrity report."""
         del preferred_date_format  # Reserved for future parsing overrides.
+
+        async def emit_progress(stage: str, progress: int, message: str) -> None:
+            if progress_callback is None:
+                return
+
+            result = progress_callback(stage, progress, message)
+            if inspect.isawaitable(result):
+                await result
 
         started_at = datetime.now(tz=timezone.utc)
         source_path = Path(file_path)
@@ -72,6 +83,7 @@ class IngestionService:
                 f"Arquivo de {file_size} bytes excede limite de {max_size} bytes"
             )
 
+        await emit_progress("hashing", 8, "Calculando assinatura do arquivo")
         file_hash = await self._calculate_sha256(str(source_path))
         file_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, file_hash))
         file_format = FORMAT_MAP[extension]
@@ -82,19 +94,23 @@ class IngestionService:
         if not stored_original_path.exists():
             shutil.copy2(source_path, stored_original_path)
 
+        await emit_progress("reading", 25, "Lendo estrutura do arquivo")
         primary = await self._read_primary(stored_original_path, file_format, encoding, delimiter)
         engines_used = ["polars/calamine"]
         secondary: dict[str, dict[str, Any]] = {}
 
         if file_format in {"xlsx", "xlsm"}:
+            await emit_progress("reading_secondary", 40, "Comparando leitura com outra engine")
             secondary = await self._read_secondary_xlsx(stored_original_path)
             engines_used.append("openpyxl")
 
         if file_format == "xlsb":
             engines_used.append("pyxlsb")
 
+        await emit_progress("validating", 58, "Validando consistencia e qualidade dos dados")
         divergences = self._compare_readings(primary, secondary)
 
+        await emit_progress("profiling", 72, "Gerando esquema e perfil das abas")
         sheets_metadata: list[SheetMetadata] = []
         for index, (sheet_name, frame) in enumerate(primary.items()):
             sheet_hash = self._hash_polars_sheet(frame)
@@ -112,18 +128,16 @@ class IngestionService:
         )
 
         if strict_mode and divergences:
-            raise InconsistencyException(
-                "Modo estrito bloqueou processamento por divergencias entre engines",
-                meta={
-                    "status": "inconsistent",
-                    "integrity_report": report.model_dump(),
-                    "file_uuid": file_uuid,
-                },
+            report.warnings.append(
+                "Modo estrito detectou divergencias, mas o dataset foi persistido como inconsistente."
             )
 
+        await emit_progress("persisting", 88, "Persistindo dados analiticos")
         duckdb_path = await self._persist_to_duckdb(file_uuid, primary)
         status = "inconsistent" if divergences else "completed"
         elapsed_seconds = (datetime.now(tz=timezone.utc) - started_at).total_seconds()
+
+        await emit_progress("finalizing", 100, "Processamento concluido")
 
         return {
             "uuid": file_uuid,
@@ -290,15 +304,36 @@ class IngestionService:
         result: dict[str, dict[str, Any]] = {}
         for sheet_name in workbook.sheetnames:
             worksheet = workbook[sheet_name]
+            effective_rows, effective_columns = self._get_effective_sheet_bounds(worksheet)
             result[sheet_name] = {
-                "max_row": max(0, worksheet.max_row - 1),
-                "max_column": worksheet.max_column,
+                "max_row": effective_rows,
+                "max_column": effective_columns,
                 "merged_cells_count": len(worksheet.merged_cells.ranges),
                 "formula_count": self._count_formulas(worksheet),
                 "sheet_hash": self._hash_sheet_structure(worksheet),
             }
         workbook.close()
         return result
+
+    def _get_effective_sheet_bounds(self, worksheet: Any) -> tuple[int, int]:
+        last_non_empty_row = 0
+        last_non_empty_column = 0
+
+        for row_index, row in enumerate(worksheet.iter_rows(values_only=False), start=1):
+            row_has_value = False
+            for column_index, cell in enumerate(row, start=1):
+                value = cell.value
+                if value in (None, ""):
+                    continue
+
+                row_has_value = True
+                if column_index > last_non_empty_column:
+                    last_non_empty_column = column_index
+
+            if row_has_value:
+                last_non_empty_row = row_index
+
+        return max(0, last_non_empty_row - 1), last_non_empty_column
 
     def _compare_readings(
         self,

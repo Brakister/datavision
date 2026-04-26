@@ -19,7 +19,7 @@ async def lifespan(app: FastAPI):
     logger.info("DataVision iniciando", extra={"version": settings.APP_VERSION})
 
     if settings.AUTO_RUN_MIGRATIONS:
-        run_migrations()
+        logger.info("Migrations automaticas desativadas no startup local")
 
     yield
     logger.info("DataVision encerrando")
@@ -50,6 +50,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
+    allow_origin_regex=r"^https?://(?:localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0|192\.168\.\d+\.\d+)(?::\d+)?$",
     allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
     allow_methods=["*"],
     allow_headers=["*"],

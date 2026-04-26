@@ -1,4 +1,5 @@
 """Endpoints de upload e processamento de arquivos."""
+import asyncio
 import hashlib
 import tempfile
 import uuid
@@ -12,12 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.exceptions import (
     FileTooLargeException,
-    InconsistencyException,
     UnsupportedFormatException,
     ValidationException,
 )
 from app.core.logging import logger
-from app.db.database import get_db
+from app.db.database import AsyncSessionLocal, get_db
 from app.models import FileUpload
 from app.schemas import UploadResponse
 from app.services.ingestion import ingestion_service
@@ -25,6 +25,147 @@ from app.services.local_store import load_record, save_record
 
 router = APIRouter(prefix="/upload", tags=["Upload"])
 settings = get_settings()
+
+
+def _build_record_payload(
+    *,
+    file_uuid: str,
+    filename: str,
+    file_size_bytes: int,
+    file_hash: str,
+    ext: str,
+    strict_mode: bool,
+    status: str,
+    metadata_json: dict,
+) -> dict:
+    return {
+        "id": file_uuid,
+        "original_filename": filename,
+        "file_size_bytes": file_size_bytes,
+        "file_hash_sha256": file_hash,
+        "file_format": ext.lstrip("."),
+        "status": status,
+        "metadata_json": metadata_json,
+    }
+
+
+async def _persist_record(
+    *,
+    file_uuid: str,
+    payload: dict,
+    use_db: bool,
+) -> None:
+    if use_db:
+        try:
+            parsed_uuid = uuid.UUID(file_uuid)
+            async with AsyncSessionLocal() as session:
+                record = await session.get(FileUpload, parsed_uuid)
+                if record is not None:
+                    record.status = payload.get("status", record.status)
+                    record.metadata_json = payload.get("metadata_json", record.metadata_json or {})
+                    await session.commit()
+                    return
+        except Exception:
+            logger.exception("Falha ao persistir estado do upload no banco; usando storage local")
+
+    save_record(file_uuid, payload)
+
+
+async def _run_processing_job(
+    *,
+    file_uuid: str,
+    file_path: str,
+    original_filename: str,
+    file_size_bytes: int,
+    file_hash: str,
+    strict_mode: bool,
+    preferred_date_format: Optional[str],
+    encoding: Optional[str],
+    delimiter: Optional[str],
+    use_db: bool,
+    ext: str,
+) -> None:
+    async def update_progress(stage: str, progress: int, message: str) -> None:
+        current_record = load_record(file_uuid) or {}
+        metadata_json = dict(current_record.get("metadata_json") or {})
+        metadata_json["processing_progress"] = {
+            "status": "processing",
+            "stage": stage,
+            "progress": progress,
+            "message": message,
+        }
+        payload = _build_record_payload(
+            file_uuid=file_uuid,
+            filename=original_filename,
+            file_size_bytes=file_size_bytes,
+            file_hash=file_hash,
+            ext=ext,
+            strict_mode=strict_mode,
+            status="processing",
+            metadata_json=metadata_json,
+        )
+        await _persist_record(file_uuid=file_uuid, payload=payload, use_db=use_db)
+
+    try:
+        result = await ingestion_service.process_upload(
+            file_path=file_path,
+            original_filename=original_filename,
+            strict_mode=strict_mode,
+            preferred_date_format=preferred_date_format,
+            encoding=encoding,
+            delimiter=delimiter,
+            progress_callback=update_progress,
+        )
+
+        metadata_json = {
+            "strict_mode": strict_mode,
+            "integrity_report": result.get("integrity_report"),
+            "sheets": result.get("sheets"),
+            "duckdb_path": result.get("duckdb_path"),
+            "storage_path": result.get("storage_path", file_path),
+            "processing_time_seconds": result.get("processing_time_seconds"),
+            "processing_progress": {
+                "status": result.get("status", "completed"),
+                "stage": "finalizing",
+                "progress": 100,
+                "message": "Processamento concluido",
+            },
+        }
+
+        payload = _build_record_payload(
+            file_uuid=file_uuid,
+            filename=original_filename,
+            file_size_bytes=file_size_bytes,
+            file_hash=file_hash,
+            ext=ext,
+            strict_mode=strict_mode,
+            status=result.get("status", "completed"),
+            metadata_json=metadata_json,
+        )
+        await _persist_record(file_uuid=file_uuid, payload=payload, use_db=use_db)
+    except Exception as exc:
+        logger.exception("Falha no processamento assíncrono do upload", extra={"file_uuid": file_uuid})
+        current_record = load_record(file_uuid) or {}
+        metadata_json = dict(current_record.get("metadata_json") or {})
+        metadata_json["error"] = str(exc)
+        metadata_json["processing_progress"] = {
+            "status": "failed",
+            "stage": "failed",
+            "progress": 100,
+            "message": "Falha ao processar o arquivo",
+        }
+
+        payload = _build_record_payload(
+            file_uuid=file_uuid,
+            filename=original_filename,
+            file_size_bytes=file_size_bytes,
+            file_hash=file_hash,
+            ext=ext,
+            strict_mode=strict_mode,
+            status="failed",
+            metadata_json=metadata_json,
+        )
+        await _persist_record(file_uuid=file_uuid, payload=payload, use_db=use_db)
 
 
 @router.post("", response_model=UploadResponse)
@@ -99,6 +240,7 @@ async def upload_file(
     }
 
     record = None
+    should_schedule = True
     if db is not None:
         existing = await db.scalar(
             select(FileUpload).where(FileUpload.file_hash_sha256 == file_hash)
@@ -121,102 +263,59 @@ async def upload_file(
             record = existing
             record_status = record.status
             record_metadata = record.metadata_json or record_metadata
+            should_schedule = record_status == "failed"
     else:
         # Modo local: tenta deduplicar por hash via arquivo JSON
         existing_local = load_record(str(file_uuid))
         if existing_local and existing_local.get("file_hash_sha256") == file_hash:
             record_status = existing_local.get("status", "processing")
             record_metadata = existing_local.get("metadata_json", record_metadata)
+            should_schedule = record_status == "failed"
 
-    # Processamento síncrono (Fase 1/3): gera analytics.db e relatório de integridade
-    try:
-        result = await ingestion_service.process_upload(
-            file_path=str(final_path),
-            original_filename=filename,
-            strict_mode=strict_mode,
-            preferred_date_format=preferred_date_format,
-            encoding=encoding,
-            delimiter=delimiter,
+    if should_schedule:
+        initial_progress = {
+            "status": "processing",
+            "stage": "queued",
+            "progress": 0,
+            "message": "Arquivo recebido. Aguardando processamento.",
+        }
+        record_metadata = {**(record_metadata or {}), "processing_progress": initial_progress}
+
+        if db is not None and record is not None:
+            record.status = "processing"
+            record.metadata_json = record_metadata
+            await db.commit()
+        else:
+            save_record(
+                str(file_uuid),
+                _build_record_payload(
+                    file_uuid=str(file_uuid),
+                    filename=filename,
+                    file_size_bytes=file_size_bytes,
+                    file_hash=file_hash,
+                    ext=ext,
+                    strict_mode=strict_mode,
+                    status="processing",
+                    metadata_json=record_metadata,
+                ),
+            )
+
+    if should_schedule:
+        asyncio.create_task(
+            _run_processing_job(
+                file_uuid=str(file_uuid),
+                file_path=str(final_path),
+                original_filename=filename,
+                file_size_bytes=file_size_bytes,
+                file_hash=file_hash,
+                strict_mode=strict_mode,
+                preferred_date_format=preferred_date_format,
+                encoding=encoding,
+                delimiter=delimiter,
+                use_db=db is not None,
+                ext=ext,
+            )
         )
-
-        record_status = result.get("status", "completed")
-        record_metadata = {
-            **(record_metadata or {}),
-            "integrity_report": result.get("integrity_report"),
-            "sheets": result.get("sheets"),
-            "duckdb_path": result.get("duckdb_path"),
-            "storage_path": result.get("storage_path", str(final_path)),
-            "processing_time_seconds": result.get("processing_time_seconds"),
-        }
-
-        if db is not None and record is not None:
-            record.status = record_status
-            record.metadata_json = record_metadata
-            await db.commit()
-        else:
-            save_record(
-                str(file_uuid),
-                {
-                    "id": str(file_uuid),
-                    "original_filename": filename,
-                    "file_size_bytes": file_size_bytes,
-                    "file_hash_sha256": file_hash,
-                    "file_format": ext.lstrip("."),
-                    "status": record_status,
-                    "metadata_json": record_metadata,
-                },
-            )
-
-    except InconsistencyException as exc:
-        # Modo estrito: salva relatório e marca como inconsistente
-        meta = getattr(exc, "meta", None) or {}
-        record_status = "inconsistent"
-        record_metadata = {
-            **(record_metadata or {}),
-            "integrity_report": meta.get("integrity_report"),
-            "sheets": meta.get("sheets"),
-        }
-
-        if db is not None and record is not None:
-            record.status = record_status
-            record.metadata_json = record_metadata
-            await db.commit()
-        else:
-            save_record(
-                str(file_uuid),
-                {
-                    "id": str(file_uuid),
-                    "original_filename": filename,
-                    "file_size_bytes": file_size_bytes,
-                    "file_hash_sha256": file_hash,
-                    "file_format": ext.lstrip("."),
-                    "status": record_status,
-                    "metadata_json": record_metadata,
-                },
-            )
-        raise
-    except Exception as exc:
-        record_status = "failed"
-        record_metadata = {**(record_metadata or {}), "error": str(exc)}
-
-        if db is not None and record is not None:
-            record.status = record_status
-            record.metadata_json = record_metadata
-            await db.commit()
-        else:
-            save_record(
-                str(file_uuid),
-                {
-                    "id": str(file_uuid),
-                    "original_filename": filename,
-                    "file_size_bytes": file_size_bytes,
-                    "file_hash_sha256": file_hash,
-                    "file_format": ext.lstrip("."),
-                    "status": record_status,
-                    "metadata_json": record_metadata,
-                },
-            )
-        raise
 
     logger.info(
         "Upload salvo",
@@ -233,8 +332,8 @@ async def upload_file(
         file_uuid=str(file_uuid),
         original_filename=filename,
         file_size_bytes=file_size_bytes,
-        status=record_status,
-        message="Arquivo recebido e processado." if record_status != "pending" else "Arquivo recebido com sucesso e aguardando processamento.",
+        status="processing" if should_schedule else record_status,
+        message="Arquivo recebido. Processamento em andamento." if should_schedule else "Arquivo ja processado.",
         strict_mode=strict_mode,
     )
 
@@ -252,15 +351,23 @@ async def get_processing_status(file_uuid: str, db: AsyncSession | None = Depend
         if file_record is None:
             raise ValidationException("Arquivo nao encontrado", error_code="FILE_NOT_FOUND", status_code=404)
         status = file_record.status
+        metadata_json = file_record.metadata_json or {}
     else:
         local = load_record(file_uuid)
         if local is None:
             raise ValidationException("Arquivo nao encontrado", error_code="FILE_NOT_FOUND", status_code=404)
         status = local.get("status", "pending")
+        metadata_json = local.get("metadata_json") or {}
+
+    progress = metadata_json.get("processing_progress", {})
 
     return {
         "file_uuid": file_uuid,
         "status": status,
-        "progress": 0 if status == "pending" else 100,
-        "message": "Aguardando processamento" if status == "pending" else "Processamento concluido",
+        "stage": progress.get("stage", "queued" if status == "pending" else "finalizing"),
+        "progress": int(progress.get("progress", 0 if status == "pending" else 100)),
+        "message": progress.get(
+            "message",
+            "Aguardando processamento" if status == "pending" else "Processamento concluido",
+        ),
     }

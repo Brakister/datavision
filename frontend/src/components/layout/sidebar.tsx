@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
+import { useFileNavigation } from '@/hooks/use-file-navigation';
 
 const navItems = [
   { icon: Upload, label: 'Upload', path: '/' },
@@ -35,6 +36,7 @@ export function Sidebar() {
     currentFile,
   } = useAppStore();
   const location = useLocation();
+  const { buildPath } = useFileNavigation();
   const [isDesktop, setIsDesktop] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 1024 : true
   );
@@ -77,7 +79,7 @@ export function Sidebar() {
 
               const content = (
                 <Link
-                  to={item.path}
+                  to={buildPath(item.path)}
                   onClick={() => !isDesktop && setMobileSidebarOpen(false)}
                   className={`
                     flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all

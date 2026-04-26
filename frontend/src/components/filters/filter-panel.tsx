@@ -22,14 +22,16 @@ import type { FilterOperator, ColumnSchema } from '@/types';
 interface FilterPanelProps {
   columns: ColumnSchema[];
   onApplyFilters?: (filters: FilterOperator[]) => void;
+  affectedRows?: number;
 }
 
-export function FilterPanel({ columns, onApplyFilters }: FilterPanelProps) {
+export function FilterPanel({ columns, onApplyFilters, affectedRows }: FilterPanelProps) {
   const {
     activeFilters,
     addFilter,
     removeFilter,
     clearFilters,
+    setFilters,
     savedPresets,
     savePreset,
     deletePreset,
@@ -39,6 +41,7 @@ export function FilterPanel({ columns, onApplyFilters }: FilterPanelProps) {
   const [newFilterColumn, setNewFilterColumn] = React.useState('');
   const [newFilterOperator, setNewFilterOperator] = React.useState('equals');
   const [newFilterValue, setNewFilterValue] = React.useState('');
+  const [newFilterValueTo, setNewFilterValueTo] = React.useState('');
   const [presetName, setPresetName] = React.useState('');
   const [showSavePreset, setShowSavePreset] = React.useState(false);
 
@@ -59,13 +62,22 @@ export function FilterPanel({ columns, onApplyFilters }: FilterPanelProps) {
 
   const handleAddFilter = () => {
     if (!newFilterColumn) return;
+
+    const requiresNoValue = newFilterOperator === 'is_null' || newFilterOperator === 'is_not_null';
+    if (!requiresNoValue && !newFilterValue.trim()) return;
+
+    if (newFilterOperator === 'between' && !newFilterValueTo.trim()) return;
+
     const filter: FilterOperator = {
       column: newFilterColumn,
       operator: newFilterOperator as FilterOperator['operator'],
-      value: newFilterValue,
+      value: requiresNoValue ? null : newFilterValue,
+      value_to: newFilterOperator === 'between' ? newFilterValueTo : undefined,
     };
+
     addFilter(filter);
     setNewFilterValue('');
+    setNewFilterValueTo('');
     onApplyFilters?.([...activeFilters, filter]);
   };
 
@@ -91,7 +103,7 @@ export function FilterPanel({ columns, onApplyFilters }: FilterPanelProps) {
   };
 
   const handleLoadPreset = (preset: typeof savedPresets[0]) => {
-    useAppStore.getState().setFilters(preset.filters);
+    setFilters(preset.filters);
     onApplyFilters?.(preset.filters);
   };
 
@@ -108,6 +120,9 @@ export function FilterPanel({ columns, onApplyFilters }: FilterPanelProps) {
             <CardTitle className="text-sm font-semibold">Filtros Avancados</CardTitle>
             {activeFilters.length > 0 && (
               <Badge variant="secondary" className="text-[10px]">{activeFilters.length}</Badge>
+            )}
+            {affectedRows !== undefined && (
+              <Badge variant="outline" className="text-[10px]">{affectedRows.toLocaleString()} linhas</Badge>
             )}
           </div>
           <div className="flex items-center gap-1">
@@ -191,14 +206,37 @@ export function FilterPanel({ columns, onApplyFilters }: FilterPanelProps) {
                     onChange={(e) => setNewFilterOperator(e.target.value)}
                     className="text-xs"
                   />
-                  <Input
-                    placeholder="Valor..."
-                    value={newFilterValue}
-                    onChange={(e) => setNewFilterValue(e.target.value)}
-                    className="text-xs h-10"
-                    onKeyDown={(e) => e.key === 'Enter' && handleAddFilter()}
-                  />
-                  <Button size="sm" onClick={handleAddFilter} className="h-10">
+                  {newFilterOperator === 'between' ? (
+                    <div className="grid grid-cols-2 gap-2 sm:col-span-2">
+                      <Input
+                        placeholder="De..."
+                        value={newFilterValue}
+                        onChange={(e) => setNewFilterValue(e.target.value)}
+                        className="text-xs h-10"
+                        onKeyDown={(e) => e.key === 'Enter' && handleAddFilter()}
+                      />
+                      <Input
+                        placeholder="Ate..."
+                        value={newFilterValueTo}
+                        onChange={(e) => setNewFilterValueTo(e.target.value)}
+                        className="text-xs h-10"
+                        onKeyDown={(e) => e.key === 'Enter' && handleAddFilter()}
+                      />
+                    </div>
+                  ) : newFilterOperator === 'is_null' || newFilterOperator === 'is_not_null' ? (
+                    <div className="text-xs text-muted-foreground flex items-center px-3 rounded-lg border h-10">
+                      Este operador nao precisa de valor.
+                    </div>
+                  ) : (
+                    <Input
+                      placeholder={newFilterOperator === 'in' ? 'Valor1, Valor2, ...' : 'Valor...'}
+                      value={newFilterValue}
+                      onChange={(e) => setNewFilterValue(e.target.value)}
+                      className="text-xs h-10"
+                      onKeyDown={(e) => e.key === 'Enter' && handleAddFilter()}
+                    />
+                  )}
+                  <Button size="sm" onClick={handleAddFilter} className="h-10 sm:col-span-1">
                     <Plus className="h-4 w-4 mr-1" />
                     Adicionar
                   </Button>

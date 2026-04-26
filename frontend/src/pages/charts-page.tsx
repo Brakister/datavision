@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { BarChart3, FileSpreadsheet, ArrowLeft, Sparkles, AlertTriangle } from 'lucide-react';
+import { BarChart3, FileSpreadsheet, ArrowLeft, Sparkles, AlertTriangle, Loader2 } from 'lucide-react';
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -11,7 +11,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useFileMetadata } from '@/hooks/use-file-metadata';
 import { useChartSuggestions } from '@/hooks/use-chart-suggestions';
 import { useChartData } from '@/hooks/use-chart-data';
+import { useFileNavigation } from '@/hooks/use-file-navigation';
 import { useAppStore } from '@/stores';
+import { InconsistencyDetails } from '@/components/layout/inconsistency-details';
+import { FilterPanel } from '@/components/filters/filter-panel';
+import { formatFilterLabel, mapFiltersToChartRequest } from '@/utils/filter-mappers';
 
 import type { ChartSuggestion } from '@/types';
 import { BarChart, LineChart, PieChart, ScatterChart, RadarChart, ChartWrapper, KPICard } from '@/components/charts';
@@ -20,6 +24,7 @@ export function ChartsPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const fileUuid = searchParams.get('file');
+  const { buildPath } = useFileNavigation();
 
   const {
     currentFile,
@@ -28,20 +33,26 @@ export function ChartsPage() {
     setSelectedSheet,
     chartSuggestions,
     setChartSuggestions,
+    uploadSession,
+    activeFilters,
   } = useAppStore();
 
-  const metadataQuery = useFileMetadata(fileUuid);
+  const activeFile = currentFile?.uuid === fileUuid ? currentFile : null;
+  const activeSheet = activeFile ? selectedSheet : null;
+  const isProcessingUpload = uploadSession?.fileUuid === fileUuid && uploadSession.status === 'processing';
+
+  const metadataQuery = useFileMetadata(fileUuid, !isProcessingUpload);
 
   React.useEffect(() => {
     if (metadataQuery.data) {
       setCurrentFile(metadataQuery.data);
-      if (!selectedSheet) {
+      if (currentFile?.uuid !== metadataQuery.data.uuid || !selectedSheet) {
         setSelectedSheet(metadataQuery.data.sheets[0]?.name ?? null);
       }
     }
-  }, [metadataQuery.data, selectedSheet, setCurrentFile, setSelectedSheet]);
+  }, [currentFile?.uuid, metadataQuery.data, selectedSheet, setCurrentFile, setSelectedSheet]);
 
-  const suggestionsQuery = useChartSuggestions(fileUuid, selectedSheet);
+  const suggestionsQuery = useChartSuggestions(fileUuid, activeSheet, !isProcessingUpload && !!activeSheet);
 
   React.useEffect(() => {
     if (suggestionsQuery.data) {
@@ -57,19 +68,62 @@ export function ChartsPage() {
     }
   }, [activeSuggestion, chartSuggestions]);
 
-  const chartDataQuery = useChartData(fileUuid, selectedSheet, activeSuggestion);
+  const chartFilters = React.useMemo(() => mapFiltersToChartRequest(activeFilters), [activeFilters]);
+  const filterLabels = React.useMemo(() => activeFilters.map(formatFilterLabel), [activeFilters]);
+
+  const chartDataQuery = useChartData(
+    fileUuid,
+    activeSheet,
+    activeSuggestion,
+    chartFilters,
+    !isProcessingUpload && !!activeSheet
+  );
 
   const sheetOptions = React.useMemo(() => {
     const sheets = metadataQuery.data?.sheets ?? [];
     return sheets.map((s) => ({ value: s.name, label: `${s.name} (${s.row_count.toLocaleString()} linhas)` }));
   }, [metadataQuery.data]);
 
-  const data = chartDataQuery.data?.data ?? [];
+  const data = activeFile ? chartDataQuery.data?.data ?? [] : [];
+
+  const processingCard = isProcessingUpload ? (
+    <Card>
+      <CardContent className="p-6">
+        <div className="flex items-start gap-4">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/15 text-primary">
+            <Loader2 className="h-5 w-5 animate-spin" />
+          </div>
+          <div className="min-w-0 flex-1 space-y-3">
+            <div>
+              <div className="text-lg font-semibold">{uploadSession?.message || 'Processando arquivo...'}</div>
+              <div className="text-sm text-muted-foreground">
+                {uploadSession?.fileName || 'O arquivo enviado ainda esta sendo consolidado no backend.'}
+              </div>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-sky-500 via-cyan-400 to-emerald-400 transition-[width] duration-300 ease-out"
+                style={{ width: `${Math.max(uploadSession?.progress ?? 0, 8)}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Etapa: {uploadSession?.stage || 'processando'}</span>
+              <span>{uploadSession?.progress ?? 0}%</span>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  ) : null;
 
   const renderChart = () => {
-    if (!selectedSheet) {
+    if (isProcessingUpload) {
+      return processingCard;
+    }
+
+    if (!activeSheet) {
       return (
-        <ChartWrapper chartType="bar" title="Selecione uma aba" description="Escolha uma aba para ver sugestões e gráficos.">
+        <ChartWrapper chartType="bar" title="Selecione uma aba" description="Escolha uma aba para ver sugestoes e graficos.">
           <div className="h-[350px] flex items-center justify-center text-sm text-muted-foreground">
             Nenhuma aba selecionada.
           </div>
@@ -79,7 +133,7 @@ export function ChartsPage() {
 
     if (suggestionsQuery.isLoading) {
       return (
-        <ChartWrapper chartType="bar" title="Carregando sugestões..." isLoading>
+        <ChartWrapper chartType="bar" title="Carregando sugestoes..." isLoading>
           <div />
         </ChartWrapper>
       );
@@ -89,16 +143,16 @@ export function ChartsPage() {
       const msg =
         (suggestionsQuery.error as any)?.response?.data?.detail ||
         (suggestionsQuery.error as Error)?.message ||
-        'Falha ao buscar sugestões.';
+        'Falha ao buscar sugestoes.';
       return (
-        <ChartWrapper chartType="bar" title="Não foi possível carregar sugestões">
+        <ChartWrapper chartType="bar" title="Nao foi possivel carregar sugestoes">
           <div className="h-[350px] flex flex-col items-center justify-center text-sm text-muted-foreground text-center gap-2">
             <AlertTriangle className="h-5 w-5 text-destructive" />
             <div>{String(msg)}</div>
             <div className="text-xs">
-              Você ainda pode abrir a tabela para ver os dados brutos.
+              Voce ainda pode abrir a tabela para ver os dados brutos.
             </div>
-            <Button className="mt-2" variant="outline" onClick={() => navigate(`/table?file=${encodeURIComponent(fileUuid!)}`)}>
+            <Button className="mt-2" variant="outline" onClick={() => navigate(buildPath('/table'))}>
               Ver tabela
             </Button>
           </div>
@@ -110,17 +164,16 @@ export function ChartsPage() {
       return (
         <ChartWrapper
           chartType="bar"
-          title="Escolha uma sugestão"
-          description="Selecione um card à esquerda para renderizar um gráfico com dados reais."
+          title="Escolha uma sugestao"
+          description="Selecione um card a esquerda para renderizar um grafico com dados reais."
+          filtersApplied={filterLabels}
         >
           <div className="h-[350px] flex items-center justify-center text-sm text-muted-foreground">
-            Nenhuma sugestão selecionada.
+            Nenhuma sugestao selecionada.
           </div>
         </ChartWrapper>
       );
     }
-
-    if (!activeSuggestion) return null;
 
     const dims = activeSuggestion.dimension_columns;
     const mets = activeSuggestion.metric_columns;
@@ -144,6 +197,7 @@ export function ChartsPage() {
             xKey={dims[0] ?? 'x'}
             yKeys={mets}
             stacked={mets.length > 1}
+            filtersApplied={filterLabels}
           />
         );
       case 'line':
@@ -161,6 +215,7 @@ export function ChartsPage() {
             xKey={dims[0] ?? 'x'}
             yKeys={mets}
             showArea={activeSuggestion.chart_type === 'area'}
+            filtersApplied={filterLabels}
           />
         );
       case 'pie':
@@ -178,6 +233,7 @@ export function ChartsPage() {
             nameKey={dims[0] ?? 'name'}
             valueKey={mets[0] ?? 'value'}
             donut={activeSuggestion.chart_type === 'donut'}
+            filtersApplied={filterLabels}
           />
         );
       case 'scatter':
@@ -192,6 +248,7 @@ export function ChartsPage() {
             data={data}
             xKey={mets[0] ?? 'x'}
             yKey={mets[1] ?? 'y'}
+            filtersApplied={filterLabels}
           />
         );
       case 'radar':
@@ -207,6 +264,7 @@ export function ChartsPage() {
             data={data}
             angleKey={dims[0] ?? 'category'}
             valueKeys={mets}
+            filtersApplied={filterLabels}
           />
         );
       case 'kpi': {
@@ -222,6 +280,7 @@ export function ChartsPage() {
             dimensions={dims}
             isLoading={isLoading}
             isEmpty={isEmpty}
+            filtersApplied={filterLabels}
           >
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <KPICard title={firstMetric ?? 'KPI'} value={sum} format="decimal" />
@@ -240,9 +299,10 @@ export function ChartsPage() {
             dimensions={dims}
             isLoading={isLoading}
             isEmpty={isEmpty}
+            filtersApplied={filterLabels}
           >
             <div className="h-[350px] flex items-center justify-center text-sm text-muted-foreground">
-              Tipo de gráfico ainda não suportado: {activeSuggestion.chart_type}
+              Tipo de grafico ainda nao suportado: {activeSuggestion.chart_type}
             </div>
           </ChartWrapper>
         );
@@ -257,7 +317,7 @@ export function ChartsPage() {
             <FileSpreadsheet className="h-12 w-12 text-muted-foreground mb-4" />
             <h2 className="text-lg font-semibold">Nenhum arquivo selecionado</h2>
             <p className="text-sm text-muted-foreground mt-2">
-              Envie um arquivo na página de upload para gerar o dashboard.
+              Envie um arquivo na pagina de upload para gerar o dashboard.
             </p>
             <Button className="mt-6" onClick={() => navigate('/upload')}>
               <ArrowLeft className="h-4 w-4" />
@@ -276,14 +336,19 @@ export function ChartsPage() {
           <div className="flex items-center gap-2">
             <BarChart3 className="h-5 w-5 text-muted-foreground" />
             <h1 className="text-xl font-semibold tracking-tight truncate">Dashboard</h1>
-            {currentFile && (
-              <Badge variant={currentFile.status === 'inconsistent' ? 'warning' : 'success'}>
-                {currentFile.status === 'inconsistent' ? 'Inconsistente' : 'OK'}
-              </Badge>
+            {activeFile && (
+              <div className="flex items-center gap-2">
+                <Badge variant={activeFile.status === 'inconsistent' ? 'warning' : 'success'}>
+                  {activeFile.status === 'inconsistent' ? 'Inconsistente' : 'OK'}
+                </Badge>
+                {activeFile.status === 'inconsistent' && (
+                  <InconsistencyDetails report={activeFile.integrity_report} buttonLabel="Ver inconsistencias" />
+                )}
+              </div>
             )}
           </div>
           <p className="text-sm text-muted-foreground mt-1">
-            Sugestões determinísticas de gráficos (sem IA) com base no schema do arquivo.
+            Sugestoes deterministicas de graficos (sem IA) com base no schema do arquivo.
           </p>
         </div>
 
@@ -293,7 +358,7 @@ export function ChartsPage() {
           ) : (
             <div className="w-[320px] max-w-[80vw]">
               <Select
-                value={selectedSheet ?? ''}
+                value={activeSheet ?? ''}
                 onChange={(e) => setSelectedSheet(e.target.value)}
                 options={sheetOptions}
               />
@@ -325,12 +390,12 @@ export function ChartsPage() {
           <Skeleton className="h-[120px]" />
           <Skeleton className="h-[120px]" />
         </div>
-      ) : currentFile ? (
+      ) : activeFile ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KPICard title="Linhas" value={currentFile.total_rows} format="number" />
-          <KPICard title="Colunas" value={currentFile.total_columns} format="number" />
-          <KPICard title="Abas" value={currentFile.total_sheets} format="number" />
-          <KPICard title="Células vazias" value={currentFile.integrity_report.empty_cells} format="number" />
+          <KPICard title="Linhas" value={activeFile.total_rows} format="number" />
+          <KPICard title="Colunas" value={activeFile.total_columns} format="number" />
+          <KPICard title="Abas" value={activeFile.total_sheets} format="number" />
+          <KPICard title="Celulas vazias" value={activeFile.integrity_report.empty_cells} format="number" />
         </div>
       ) : null}
 
@@ -339,10 +404,10 @@ export function ChartsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-primary" />
-              Sugestões
+              Sugestoes
             </CardTitle>
             <CardDescription>
-              Clique para renderizar um gráfico com dados reais.
+              Clique para renderizar um grafico com dados reais.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -352,58 +417,72 @@ export function ChartsPage() {
                 <Skeleton className="h-16" />
                 <Skeleton className="h-16" />
               </>
-            ) : chartSuggestions.length === 0 ? (
-              <div className="text-sm text-muted-foreground space-y-2">
-                <div>Nenhuma sugestão encontrada para esta aba.</div>
-                <Button
-                  variant="outline"
-                  onClick={() => navigate(`/table?file=${encodeURIComponent(fileUuid)}`)}
-                >
-                  Ver tabela (dados reais)
-                </Button>
-              </div>
-            ) : (
-              chartSuggestions.map((sug) => {
-                const isActive = activeSuggestion?.title === sug.title && activeSuggestion?.chart_type === sug.chart_type;
-                return (
-                  <button
-                    key={`${sug.chart_type}:${sug.title}`}
-                    className={[
-                      'w-full text-left rounded-lg border p-3 transition-all',
-                      isActive
-                        ? 'border-primary/50 bg-primary/10'
-                        : 'border-border hover:border-primary/30 hover:bg-accent/30',
-                    ].join(' ')}
-                    onClick={() => setActiveSuggestion(sug)}
-                    type="button"
+            ) : activeSheet ? (
+              chartSuggestions.length === 0 ? (
+                <div className="text-sm text-muted-foreground space-y-2">
+                  <div>Nenhuma sugestao encontrada para esta aba.</div>
+                  <Button
+                    variant="outline"
+                    onClick={() => navigate(buildPath('/table'))}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="font-medium text-sm truncate">{sug.title}</div>
-                        <div className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                          {sug.description}
+                    Ver tabela (dados reais)
+                  </Button>
+                </div>
+              ) : (
+                chartSuggestions.map((sug) => {
+                  const isActive = activeSuggestion?.title === sug.title && activeSuggestion?.chart_type === sug.chart_type;
+                  return (
+                    <button
+                      key={`${sug.chart_type}:${sug.title}`}
+                      className={[
+                        'w-full text-left rounded-lg border p-3 transition-all',
+                        isActive
+                          ? 'border-primary/50 bg-primary/10'
+                          : 'border-border hover:border-primary/30 hover:bg-accent/30',
+                      ].join(' ')}
+                      onClick={() => setActiveSuggestion(sug)}
+                      type="button"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-medium text-sm truncate">{sug.title}</div>
+                          <div className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                            {sug.description}
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            <Badge variant="secondary" className="text-[10px]">
+                              {sug.chart_type}
+                            </Badge>
+                            <Badge variant="outline" className="text-[10px]">
+                              conf: {(sug.confidence_score * 100).toFixed(0)}%
+                            </Badge>
+                          </div>
                         </div>
-                        <div className="mt-2 flex flex-wrap gap-1">
-                          <Badge variant="secondary" className="text-[10px]">
-                            {sug.chart_type}
-                          </Badge>
-                          <Badge variant="outline" className="text-[10px]">
-                            conf: {(sug.confidence_score * 100).toFixed(0)}%
-                          </Badge>
+                        <div className="shrink-0 text-[10px] text-muted-foreground">
+                          {sug.recommended_aggregation}
                         </div>
                       </div>
-                      <div className="shrink-0 text-[10px] text-muted-foreground">
-                        {sug.recommended_aggregation}
-                      </div>
-                    </div>
-                  </button>
-                );
-              })
+                    </button>
+                  );
+                })
+              )
+            ) : (
+              <div className="text-sm text-muted-foreground">
+                Selecione uma aba para carregar sugestoes com dados reais.
+              </div>
             )}
           </CardContent>
         </Card>
 
-        <div className="lg:col-span-8">{renderChart()}</div>
+        <div className="lg:col-span-8 space-y-4">
+          {activeFile && activeSheet && (
+            <FilterPanel
+              columns={activeFile.sheets.find((sheet) => sheet.name === activeSheet)?.columns ?? []}
+              affectedRows={chartDataQuery.data?.total_rows}
+            />
+          )}
+          {renderChart()}
+        </div>
       </div>
     </div>
   );

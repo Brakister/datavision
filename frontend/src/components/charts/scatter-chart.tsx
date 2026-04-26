@@ -1,3 +1,4 @@
+import * as React from 'react';
 import {
   ScatterChart as ReScatterChart,
   Scatter,
@@ -11,6 +12,7 @@ import {
 } from 'recharts';
 import { ChartWrapper } from './chart-wrapper';
 import type { ChartWrapperProps } from './chart-wrapper';
+import { formatMetricValue } from './value-format';
 
 interface ScatterChartProps extends Omit<ChartWrapperProps, 'children' | 'chartType'> {
   data: Array<Record<string, unknown>>;
@@ -32,6 +34,8 @@ export function ScatterChart({
   onPointClick,
   ...wrapperProps
 }: ScatterChartProps) {
+  const [visible, setVisible] = React.useState(true);
+
   const CustomTooltip = ({ active, payload }: any) => {
     if (!active || !payload || !payload.length) return null;
     const point = payload[0].payload;
@@ -39,14 +43,14 @@ export function ScatterChart({
       <div className="rounded-lg border bg-popover p-3 shadow-lg">
         {nameKey && <p className="text-sm font-semibold">{point[nameKey]}</p>}
         <p className="text-xs text-muted-foreground mt-1">
-          {xKey}: {Number(point[xKey]).toLocaleString()}
+          {xKey}: {formatMetricValue(point[xKey], xKey)}
         </p>
         <p className="text-xs text-muted-foreground">
-          {yKey}: {Number(point[yKey]).toLocaleString()}
+          {yKey}: {formatMetricValue(point[yKey], yKey)}
         </p>
         {zKey && (
           <p className="text-xs text-muted-foreground">
-            {zKey}: {Number(point[zKey]).toLocaleString()}
+            {zKey}: {formatMetricValue(point[zKey], zKey)}
           </p>
         )}
       </div>
@@ -74,14 +78,19 @@ export function ScatterChart({
           />
           {zKey && <ZAxis type="number" dataKey={zKey} range={[50, 400]} />}
           <Tooltip content={<CustomTooltip />} cursor={{ strokeDasharray: '3 3' }} />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Scatter
-            name={`${xKey} vs ${yKey}`}
-            data={data}
-            fill={color}
-            onClick={(point: any) => onPointClick?.(point.payload)}
-            animationDuration={800}
+          <Legend
+            wrapperStyle={{ fontSize: 12, cursor: 'pointer' }}
+            onClick={() => setVisible((prev) => !prev)}
           />
+          {visible && (
+            <Scatter
+              name={`${xKey} vs ${yKey}`}
+              data={data}
+              fill={color}
+              onClick={(point: any) => onPointClick?.(point.payload)}
+              animationDuration={800}
+            />
+          )}
         </ReScatterChart>
       </ResponsiveContainer>
     </ChartWrapper>

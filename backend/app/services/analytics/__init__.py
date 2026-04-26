@@ -252,16 +252,63 @@ class AnalyticsService:
         where_clause = ""
         if filters:
             conditions = []
+
+            def _escape(value: Any) -> str:
+                return str(value).replace("'", "''")
+
+            def _to_number(value: Any) -> float:
+                if isinstance(value, str):
+                    value = value.replace(",", ".")
+                return float(value)
+
             for col, val in filters.items():
                 # Sanitiza nome da coluna para evitar injecao
                 safe_col = f'"{col.replace("\"", "")}"'
+
                 if isinstance(val, list):
-                    placeholders = ", ".join(f"'{str(v).replace("'", "''")}'" for v in val)
+                    placeholders = ", ".join(f"'{_escape(v)}'" for v in val)
                     conditions.append(f'{safe_col} IN ({placeholders})')
+                elif isinstance(val, dict) and "operator" in val:
+                    op = str(val.get("operator", "equals"))
+                    op_value = val.get("value")
+                    op_value_to = val.get("value_to")
+
+                    if op == "equals":
+                        conditions.append(f"{safe_col} = '{_escape(op_value)}'")
+                    elif op == "not_equals":
+                        conditions.append(f"{safe_col} <> '{_escape(op_value)}'")
+                    elif op == "contains":
+                        conditions.append(f"CAST({safe_col} AS VARCHAR) LIKE '%{_escape(op_value)}%'")
+                    elif op == "not_contains":
+                        conditions.append(f"CAST({safe_col} AS VARCHAR) NOT LIKE '%{_escape(op_value)}%'")
+                    elif op == "starts_with":
+                        conditions.append(f"CAST({safe_col} AS VARCHAR) LIKE '{_escape(op_value)}%'")
+                    elif op == "ends_with":
+                        conditions.append(f"CAST({safe_col} AS VARCHAR) LIKE '%{_escape(op_value)}'")
+                    elif op == "greater_than":
+                        conditions.append(f"TRY_CAST({safe_col} AS DOUBLE) > {_to_number(op_value)}")
+                    elif op == "less_than":
+                        conditions.append(f"TRY_CAST({safe_col} AS DOUBLE) < {_to_number(op_value)}")
+                    elif op == "between":
+                        conditions.append(
+                            f"TRY_CAST({safe_col} AS DOUBLE) BETWEEN {_to_number(op_value)} AND {_to_number(op_value_to)}"
+                        )
+                    elif op == "in":
+                        values = op_value if isinstance(op_value, list) else [v.strip() for v in str(op_value).split(",") if v.strip()]
+                        placeholders = ", ".join(f"'{_escape(v)}'" for v in values)
+                        conditions.append(f"CAST({safe_col} AS VARCHAR) IN ({placeholders})")
+                    elif op == "not_in":
+                        values = op_value if isinstance(op_value, list) else [v.strip() for v in str(op_value).split(",") if v.strip()]
+                        placeholders = ", ".join(f"'{_escape(v)}'" for v in values)
+                        conditions.append(f"CAST({safe_col} AS VARCHAR) NOT IN ({placeholders})")
+                    elif op == "is_null":
+                        conditions.append(f"{safe_col} IS NULL")
+                    elif op == "is_not_null":
+                        conditions.append(f"{safe_col} IS NOT NULL")
                 elif isinstance(val, dict) and "min" in val and "max" in val:
-                    conditions.append(f'{safe_col} BETWEEN {float(val["min"])} AND {float(val["max"])}')
+                    conditions.append(f'TRY_CAST({safe_col} AS DOUBLE) BETWEEN {_to_number(val["min"])} AND {_to_number(val["max"])}')
                 else:
-                    conditions.append(f"{safe_col} = '{str(val).replace("'", "''")}'")
+                    conditions.append(f"{safe_col} = '{_escape(val)}'")
             if conditions:
                 where_clause = "WHERE " + " AND ".join(conditions)
 
@@ -312,24 +359,52 @@ class AnalyticsService:
         where_clause = ""
         if filters:
             conditions = []
+
+            def _escape(value: Any) -> str:
+                return str(value).replace("'", "''")
+
+            def _to_number(value: Any) -> float:
+                if isinstance(value, str):
+                    value = value.replace(",", ".")
+                return float(value)
+
             for f in filters:
                 col = f.get("column")
                 op = f.get("operator")
                 val = f.get("value")
+                safe_col = f'"{str(col).replace("\"", "")}"'
 
                 if op == "equals":
-                    conditions.append(f'"{col}" = \'{val}\'')
+                    conditions.append(f"{safe_col} = '{_escape(val)}'")
+                elif op == "not_equals":
+                    conditions.append(f"{safe_col} <> '{_escape(val)}'")
                 elif op == "contains":
-                    conditions.append(f'"{col}" LIKE \'%{val}%\'')
+                    conditions.append(f"CAST({safe_col} AS VARCHAR) LIKE '%{_escape(val)}%'")
+                elif op == "not_contains":
+                    conditions.append(f"CAST({safe_col} AS VARCHAR) NOT LIKE '%{_escape(val)}%'")
+                elif op == "starts_with":
+                    conditions.append(f"CAST({safe_col} AS VARCHAR) LIKE '{_escape(val)}%'")
+                elif op == "ends_with":
+                    conditions.append(f"CAST({safe_col} AS VARCHAR) LIKE '%{_escape(val)}'")
                 elif op == "greater_than":
-                    conditions.append(f'"{col}" > {val}')
+                    conditions.append(f"TRY_CAST({safe_col} AS DOUBLE) > {_to_number(val)}")
                 elif op == "less_than":
-                    conditions.append(f'"{col}" < {val}')
+                    conditions.append(f"TRY_CAST({safe_col} AS DOUBLE) < {_to_number(val)}")
                 elif op == "between":
                     val_to = f.get("value_to")
-                    conditions.append(f'"{col}" BETWEEN {val} AND {val_to}')
+                    conditions.append(f"TRY_CAST({safe_col} AS DOUBLE) BETWEEN {_to_number(val)} AND {_to_number(val_to)}")
+                elif op == "in":
+                    values = val if isinstance(val, list) else [v.strip() for v in str(val).split(",") if v.strip()]
+                    placeholders = ", ".join(f"'{_escape(v)}'" for v in values)
+                    conditions.append(f"CAST({safe_col} AS VARCHAR) IN ({placeholders})")
+                elif op == "not_in":
+                    values = val if isinstance(val, list) else [v.strip() for v in str(val).split(",") if v.strip()]
+                    placeholders = ", ".join(f"'{_escape(v)}'" for v in values)
+                    conditions.append(f"CAST({safe_col} AS VARCHAR) NOT IN ({placeholders})")
                 elif op == "is_null":
-                    conditions.append(f'"{col}" IS NULL')
+                    conditions.append(f"{safe_col} IS NULL")
+                elif op == "is_not_null":
+                    conditions.append(f"{safe_col} IS NOT NULL")
 
             if conditions:
                 where_clause = "WHERE " + " AND ".join(conditions)

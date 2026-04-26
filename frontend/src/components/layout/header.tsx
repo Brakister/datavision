@@ -12,6 +12,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { InconsistencyDetails } from './inconsistency-details';
 
 export function Header() {
   const { theme, toggleTheme, toggleSidebar, currentFile, activeFilters } = useAppStore();
@@ -45,10 +46,13 @@ export function Header() {
               </span>
             </div>
             {currentFile.status === 'inconsistent' ? (
-              <Badge variant="warning" className="shrink-0">
-                <ShieldAlert className="h-3 w-3 mr-1" />
-                Inconsistente
-              </Badge>
+              <div className="flex items-center gap-2 shrink-0">
+                <Badge variant="warning" className="shrink-0">
+                  <ShieldAlert className="h-3 w-3 mr-1" />
+                  Inconsistente
+                </Badge>
+                <InconsistencyDetails report={currentFile.integrity_report} compact />
+              </div>
             ) : (
               <Badge variant="success" className="shrink-0">
                 <CheckCircle2 className="h-3 w-3 mr-1" />

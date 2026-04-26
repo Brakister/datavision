@@ -2,6 +2,7 @@ import axios from 'axios';
 import type { AxiosProgressEvent } from 'axios';
 import type {
   UploadResponse,
+  ProcessingProgress,
   FileMetadata,
   ChartSuggestion,
   ChartData,
@@ -14,7 +15,7 @@ import type {
   ExportResponse,
 } from '@/types';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -69,7 +70,7 @@ export const uploadService = {
 
   getStatus: async (fileUuid: string) => {
     const response = await api.get(`/upload/${fileUuid}/status`);
-    return response.data;
+    return response.data as ProcessingProgress;
   },
 };
 

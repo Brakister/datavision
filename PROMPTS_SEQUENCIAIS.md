@@ -152,19 +152,19 @@
 
 ---
 
-### Prompt 3.3 — Componentes de Gráficos Recharts
+### Prompt 3.3 — Componentes de Gráficos Recharts (feito)
 **Contexto:** Backend retorna dados agregados. Frontend precisa renderizar.
 
 **Tarefa:** Implemente wrappers Recharts completos para: BarChart (vertical/horizontal, stacked, grouped), LineChart (com/sem área), PieChart/DonutChart, ScatterChart, RadarChart, KPICard. Cada um deve ter: tooltip customizado rico, legenda interativa (clique para esconder série), responsividade, animação suave, empty state, loading state, botões de fullscreen e export PNG.
 
 **Critérios de aceitação:**
-- [ ] BarChart renderiza dados do backend corretamente
-- [ ] Click na legenda esconde/mostra série
-- [ ] Tooltip mostra valor formatado (moeda, percentual, número)
-- [ ] Gráfico se adapta a container pai (ResponsiveContainer)
-- [ ] Empty state quando data=[]
-- [ ] Loading state com skeleton
-- [ ] Fullscreen funciona (modal overlay)
+- [x] BarChart renderiza dados do backend corretamente
+- [x] Click na legenda esconde/mostra série
+- [x] Tooltip mostra valor formatado (moeda, percentual, número)
+- [x] Gráfico se adapta a container pai (ResponsiveContainer)
+- [x] Empty state quando data=[]
+- [x] Loading state com skeleton
+- [x] Fullscreen funciona (modal overlay)
 
 **Arquivos a entregar:** `components/charts/bar-chart.tsx`, `line-chart.tsx`, `pie-chart.tsx`, `scatter-chart.tsx`, `radar-chart.tsx`, `kpi-card.tsx`, `chart-wrapper.tsx`.
 
@@ -187,19 +187,19 @@
 
 ---
 
-### Prompt 4.2 — Sistema de Filtros Cross-Dashboard
+### Prompt 4.2 — Sistema de Filtros Cross-Dashboard (feito)
 **Contexto:** Dashboard mostra gráficos. Precisamos filtrar dados.
 
 **Tarefa:** Implemente o painel de filtros avançados: adicionar filtro por coluna (select), operador (equals, contains, greater_than, less_than, between, is_null), valor (input). Filtros são aplicados em TODOS os widgets do dashboard simultaneamente. Mostrar breadcrumbs dos filtros ativos com opção de remover individual. Contador de linhas afetadas. Opção de salvar preset de filtros. Presets salvos aparecem como badges clicáveis.
 
 **Critérios de aceitação:**
-- [ ] Adicionar filtro "Departamento = Vendas" funciona
-- [ ] Filtro é aplicado no gráfico ativo (dados recarregam)
-- [ ] Filtro é aplicado na tabela (dados recarregam)
-- [ ] Breadcrumb mostra cada filtro ativo com X para remover
-- [ ] "Limpar todos" remove todos os filtros
-- [ ] Salvar preset funciona e aparece na lista
-- [ ] Click em preset aplica todos os filtros de uma vez
+- [x] Adicionar filtro "Departamento = Vendas" funciona
+- [x] Filtro é aplicado no gráfico ativo (dados recarregam)
+- [x] Filtro é aplicado na tabela (dados recarregam)
+- [x] Breadcrumb mostra cada filtro ativo com X para remover
+- [x] "Limpar todos" remove todos os filtros
+- [x] Salvar preset funciona e aparece na lista
+- [x] Click em preset aplica todos os filtros de uma vez
 
 **Arquivos a entregar:** `components/filters/filter-panel.tsx`, integração com store Zustand.
 

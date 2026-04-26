@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, FileSpreadsheet, Loader2, UploadCloud } from 'lucide-react';
 import { AxiosError } from 'axios';
 
@@ -8,6 +8,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { uploadService } from '@/services';
+import { useAppStore } from '@/stores';
+import { useFileMetadata } from '@/hooks/use-file-metadata';
+import { InconsistencyDetails } from '@/components/layout/inconsistency-details';
 
 const MAX_FILE_SIZE_BYTES = 500 * 1024 * 1024;
 const SUPPORTED_EXTENSIONS = ['xlsx', 'xls', 'xlsm', 'xlsb', 'csv', 'tsv', 'ods'];
@@ -44,12 +47,22 @@ function toFriendlyError(error: unknown): string {
 
 export function UploadPage() {
   const navigate = useNavigate();
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [strictMode, setStrictMode] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [isUploading, setIsUploading] = useState(false);
+  const location = useLocation();
+  const selectedFile = useAppStore((state) => state.uploadDraftFile);
+  const setSelectedFile = useAppStore((state) => state.setUploadDraftFile);
+  const strictMode = useAppStore((state) => state.uploadDraftStrictMode);
+  const setStrictMode = useAppStore((state) => state.setUploadDraftStrictMode);
+  const uploadSession = useAppStore((state) => state.uploadSession);
+  const setUploadSession = useAppStore((state) => state.setUploadSession);
+  const updateUploadSession = useAppStore((state) => state.updateUploadSession);
+  const clearUploadSession = useAppStore((state) => state.clearUploadSession);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const isProcessing = uploadSession?.status === 'processing';
+  const visibleProgress = uploadSession?.progress ?? 0;
+  const visibleMessage = uploadSession?.message ?? 'Pronto para enviar';
+  const visibleStage = uploadSession?.stage ?? 'idle';
+  const inconsistentFileUuid = uploadSession?.status === 'inconsistent' ? uploadSession.fileUuid : null;
+  const inconsistentMetadataQuery = useFileMetadata(inconsistentFileUuid, !!inconsistentFileUuid);
 
   const fileExtension = useMemo(() => {
     if (!selectedFile) return '';
@@ -62,13 +75,17 @@ export function UploadPage() {
     noClick: false,
     noKeyboard: false,
     onDropAccepted: (files) => {
+      if (isProcessing) {
+        setErrorMessage('Existe um processamento em andamento. Aguarde concluir antes de trocar o arquivo.');
+        return;
+      }
+
       const file = files[0];
       if (!file) return;
 
       if (file.size > MAX_FILE_SIZE_BYTES) {
         setSelectedFile(null);
         setErrorMessage('Arquivo maior que 500MB. Selecione um arquivo menor.');
-        setSuccessMessage(null);
         return;
       }
 
@@ -76,18 +93,16 @@ export function UploadPage() {
       if (!SUPPORTED_EXTENSIONS.includes(extension)) {
         setSelectedFile(null);
         setErrorMessage('Formato invalido. Envie CSV, TSV, XLSX, XLS, XLSM, XLSB ou ODS.');
-        setSuccessMessage(null);
         return;
       }
 
+      clearUploadSession();
       setSelectedFile(file);
       setErrorMessage(null);
-      setSuccessMessage(null);
-      setUploadProgress(0);
     },
     onDropRejected: () => {
+      if (isProcessing) return;
       setSelectedFile(null);
-      setSuccessMessage(null);
       setErrorMessage('Nao foi possivel ler o arquivo. Verifique formato e tamanho.');
     },
     accept: {
@@ -103,12 +118,21 @@ export function UploadPage() {
   });
 
   const handleUpload = async () => {
-    if (!selectedFile || isUploading) return;
+    if (!selectedFile || isProcessing) return;
 
-    setIsUploading(true);
     setErrorMessage(null);
-    setSuccessMessage(null);
-    setUploadProgress(0);
+    const startedAt = new Date().toISOString();
+    setUploadSession({
+      fileUuid: null,
+      fileName: selectedFile.name,
+      fileSizeBytes: selectedFile.size,
+      strictMode,
+      status: 'processing',
+      stage: 'uploading',
+      progress: 0,
+      message: 'Enviando arquivo...',
+      updatedAt: startedAt,
+    });
 
     try {
       const response = await uploadService.uploadFile(
@@ -116,16 +140,41 @@ export function UploadPage() {
         strictMode,
         undefined,
         undefined,
-        (progress) => setUploadProgress(progress)
+        (progress) => {
+          const safeProgress = Math.min(progress, 99);
+          updateUploadSession({
+            progress: safeProgress,
+            stage: progress >= 100 ? 'server-processing' : 'uploading',
+            message: progress >= 100 ? 'Upload concluido. Aguardando processamento do servidor...' : 'Enviando arquivo...',
+            updatedAt: new Date().toISOString(),
+          });
+        }
       );
 
-      setUploadProgress(100);
-      setSuccessMessage('Upload concluido com sucesso. Redirecionando...');
-      navigate(`/dashboard?file=${encodeURIComponent(response.file_uuid)}`);
+      updateUploadSession({
+        fileUuid: response.file_uuid,
+        status: response.status,
+        stage: response.status === 'completed' ? 'completed' : response.status === 'inconsistent' ? 'inconsistent' : 'processing',
+        progress: response.status === 'completed' || response.status === 'inconsistent' ? 100 : 95,
+        message: response.message,
+        updatedAt: new Date().toISOString(),
+      });
+
+      setSelectedFile(null);
+
+      if (location.pathname === '/' || location.pathname.startsWith('/upload')) {
+        navigate(`/dashboard?file=${encodeURIComponent(response.file_uuid)}`);
+      }
     } catch (error) {
-      setErrorMessage(toFriendlyError(error));
-    } finally {
-      setIsUploading(false);
+      const friendlyError = toFriendlyError(error);
+      setErrorMessage(friendlyError);
+      updateUploadSession({
+        status: 'failed',
+        stage: 'failed',
+        progress: 100,
+        message: friendlyError,
+        updatedAt: new Date().toISOString(),
+      });
     }
   };
 
@@ -138,14 +187,16 @@ export function UploadPage() {
             Upload de Arquivo
           </CardTitle>
           <CardDescription>
-            Arraste um arquivo CSV, TSV ou Excel. Tamanho maximo permitido: 500MB.
+            Arraste um arquivo CSV, TSV ou Excel. Tamanho maximo permitido: 500MB. O processamento continua ao trocar de aba.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <div
             {...dropzone.getRootProps()}
             className={`rounded-xl border-2 border-dashed p-10 text-center transition-colors ${
-              dropzone.isDragActive
+              isProcessing
+                ? 'border-primary/30 bg-primary/5'
+                : dropzone.isDragActive
                 ? 'border-primary bg-primary/10'
                 : 'border-border hover:border-primary/40 hover:bg-accent/30'
             }`}
@@ -161,6 +212,11 @@ export function UploadPage() {
               <p className="text-sm text-muted-foreground">
                 Formatos: {SUPPORTED_EXTENSIONS.join(', ')}
               </p>
+              {isProcessing && (
+                <p className="text-xs text-muted-foreground">
+                  Existe um arquivo em processamento. O estado vai continuar sendo atualizado.
+                </p>
+              )}
             </div>
           </div>
 
@@ -183,30 +239,58 @@ export function UploadPage() {
                 className="h-4 w-4 rounded border-input"
                 checked={strictMode}
                 onChange={(event) => setStrictMode(event.target.checked)}
-                disabled={isUploading}
+                disabled={isProcessing}
               />
               Modo estrito
             </label>
             <span className="text-sm text-muted-foreground">
-              Se ativado, inconsistencias de estrutura retornam erro.
+              Se ativado, inconsistencias de estrutura sao registradas, mas o dashboard continua sendo gerado.
             </span>
           </div>
 
-          {isUploading && (
-            <div className="space-y-2 rounded-lg border p-4">
-              <div className="flex items-center justify-between text-sm">
+          {uploadSession && uploadSession.status !== 'idle' && (
+            <div className="overflow-hidden rounded-2xl border border-primary/20 bg-card/80 p-4 shadow-sm">
+              <div className="mb-2 flex items-center justify-between gap-3 text-sm">
                 <span className="inline-flex items-center gap-2 font-medium">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Enviando arquivo...
+                  {isProcessing ? <Loader2 className="h-4 w-4 animate-spin text-primary" /> : <CheckCircle2 className="h-4 w-4 text-primary" />}
+                  {visibleMessage}
                 </span>
-                <span>{uploadProgress}%</span>
+                <Badge variant={uploadSession.status === 'failed' ? 'destructive' : uploadSession.status === 'inconsistent' ? 'warning' : 'secondary'}>
+                  {uploadSession.status}
+                </Badge>
               </div>
-              <div className="h-2 rounded-full bg-muted">
+              <div className="mb-3 flex items-center justify-between text-xs text-muted-foreground">
+                <span className="truncate">{uploadSession.fileName}</span>
+                <span className="tabular-nums">{visibleProgress}%</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-muted">
                 <div
-                  className="h-2 rounded-full bg-primary transition-all"
-                  style={{ width: `${uploadProgress}%` }}
-                />
+                  className="relative h-full rounded-full bg-gradient-to-r from-sky-500 via-cyan-400 to-emerald-400 transition-[width] duration-300 ease-out"
+                  style={{ width: `${Math.max(visibleProgress, 8)}%` }}
+                >
+                  <div className="absolute inset-0 animate-shimmer bg-[linear-gradient(110deg,transparent_18%,rgba(255,255,255,0.35)_35%,transparent_52%)] bg-[length:200%_100%]" />
+                </div>
               </div>
+              <div className="mt-3 text-xs text-muted-foreground">Etapa atual: {visibleStage}</div>
+              {uploadSession.status === 'inconsistent' && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {inconsistentMetadataQuery.data ? (
+                    <InconsistencyDetails report={inconsistentMetadataQuery.data.integrity_report} buttonLabel="Mostrar pontos de inconsistencia" />
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (uploadSession.fileUuid) {
+                          navigate(`/dashboard?file=${encodeURIComponent(uploadSession.fileUuid)}`);
+                        }
+                      }}
+                    >
+                      Ver inconsistencias no dashboard
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -217,31 +301,26 @@ export function UploadPage() {
             </div>
           )}
 
-          {successMessage && (
-            <div className="flex items-start gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-500">
-              <CheckCircle2 className="mt-0.5 h-4 w-4" />
-              <span>{successMessage}</span>
-            </div>
-          )}
-
           <div className="flex items-center justify-end gap-3">
             <Button
               variant="outline"
               onClick={() => {
                 setSelectedFile(null);
                 setErrorMessage(null);
-                setSuccessMessage(null);
-                setUploadProgress(0);
+                setStrictMode(false);
+                if (!isProcessing) {
+                  clearUploadSession();
+                }
               }}
-              disabled={isUploading}
+              disabled={isProcessing}
             >
               Limpar
             </Button>
-            <Button onClick={handleUpload} disabled={!selectedFile || isUploading}>
-              {isUploading ? (
+            <Button onClick={handleUpload} disabled={!selectedFile || isProcessing}>
+              {isProcessing ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Enviando
+                  Processando
                 </>
               ) : (
                 <>
