@@ -61,6 +61,172 @@ Registrar alteracoes ja implementadas no DataVision para evitar repeticao de err
 - Presets de filtros salvos e reaplicados via badges clicaveis.
 - Backend de analytics atualizado para suportar operadores avancados tambem no chart-data e table-data.
 
+## Alteracoes recentes aplicadas (2026-04-26)
+1. Prioridade de dominio financeiro no analisador
+- O app deixou de tratar apenas visualizacao generica de datasets e passou a priorizar leitura financeira quando encontrar colunas compativeis com:
+  - analise mensal
+  - analise anual
+  - analise diaria
+  - receitas
+  - despesas
+  - deficit / superavit
+  - saldos
+  - divisao das receitas
+  - divisao das despesas
+
+2. Pasta `backend/`
+- Arquivo alterado: [backend/app/services/analytics/__init__.py](backend/app/services/analytics/__init__.py)
+- O servico de sugestoes passou a gerar heuristicas financeiras prioritarias antes das heuristicas genericas.
+- Foram adicionadas regras para reconhecer por nome de coluna:
+  - periodo mensal (`mes`, `competencia`, `periodo`, `referencia`)
+  - periodo anual (`ano`, `exercicio`)
+  - periodo diario (`dia`, `data`, `date`)
+  - metricas de receita, despesa, saldo e resultado
+  - dimensoes de composicao de receita e despesa
+- Novas sugestoes priorizadas quando o schema permitir:
+  - `Receitas mensais`
+  - `Despesas mensais`
+  - `Deficit / superavit mensais`
+  - `Receitas anuais`
+  - `Despesas anuais`
+  - `Deficit / superavit anuais`
+  - `Saldos anuais`
+  - `Divisao das receitas`
+  - `Divisao das despesas`
+- Foi adicionada deduplicacao de sugestoes para evitar repeticao entre regras financeiras e regras genericas.
+
+3. Pasta `backend/` - testes
+- Arquivo alterado: [backend/app/tests/test_analytics.py](backend/app/tests/test_analytics.py)
+- Foi criado teste especifico para dataset financeiro validando prioridade de:
+  - sugestoes mensais
+  - sugestoes anuais
+  - grafico donut para receitas
+  - grafico pie para despesas
+
+4. Pasta `frontend/`
+- Arquivo alterado: [frontend/src/pages/charts-page.tsx](frontend/src/pages/charts-page.tsx)
+- O dashboard agora detecta contexto financeiro pela aba atual e muda o comportamento principal.
+- Foi criado contexto derivado para:
+  - identificar se a aba tem foco financeiro
+  - identificar se existem leituras mensal, anual e diaria
+  - identificar se ha composicao de receitas e despesas
+  - montar KPIs financeiros principais
+- A tela passou a trocar titulo e descricao de `Overview do dataset` para `Painel financeiro` quando aplicavel.
+- Os cards principais agora priorizam KPIs financeiros agregados por metrica real detectada na aba.
+- Os blocos auxiliares do dashboard tambem foram adaptados para linguagem financeira quando o schema permitir.
+- A secao final de insights passou a destacar leitura financeira deterministica como prioridade.
+
+5. Pasta `frontend/` - formatacao
+- Arquivo alterado: [frontend/src/components/charts/kpi-card.tsx](frontend/src/components/charts/kpi-card.tsx)
+- KPI de moeda passou a usar formatacao monetaria BRL real, em vez de apenas numero decimal formatado.
+
+6. Pasta `frontend/` - inferencia de valores
+- Arquivo alterado: [frontend/src/components/charts/value-format.ts](frontend/src/components/charts/value-format.ts)
+- A inferencia de metricas monetarias foi ampliada para reconhecer termos financeiros como:
+  - `despesa`
+  - `saldo`
+  - `superavit`
+  - `deficit`
+  - `imposto`
+  - `folha`
+
+7. Validacao executada nesta rodada
+- `npx tsc --noEmit` no frontend executado com sucesso.
+- O `pytest` do backend nao concluiu por restricao de permissao do ambiente para diretorios temporarios do runner.
+- Mesmo assim, a heuristica financeira nova foi validada manualmente contra um `analytics.db` temporario, confirmando retorno priorizado de:
+  - `Receitas mensais`
+  - `Divisao das receitas`
+  - `Divisao das despesas`
+  - `Despesas mensais`
+  - `Receitas anuais`
+  - `Deficit / superavit anuais`
+
+8. Filtro intuitivo por forma de analise
+- Pasta `frontend/`
+- Arquivos alterados:
+  - [frontend/src/components/filters/filter-panel.tsx](frontend/src/components/filters/filter-panel.tsx)
+  - [frontend/src/pages/charts-page.tsx](frontend/src/pages/charts-page.tsx)
+  - [frontend/src/stores/index.ts](frontend/src/stores/index.ts)
+  - [frontend/src/utils/analysis-mode.ts](frontend/src/utils/analysis-mode.ts)
+- Foi adicionada uma selecao explicita de `Formas de Analises` dentro do painel de filtros, com os atalhos:
+  - `Anual`
+  - `Mensal`
+  - `Diaria`
+- A exibicao desses atalhos depende das colunas realmente detectadas na aba atual.
+- Ao clicar em uma forma de analise:
+  - o estado fica salvo na store global
+  - o dashboard passa a priorizar sugestoes e graficos compativeis com o recorte escolhido
+  - quando nao houver sugestoes compativeis, o app faz fallback para as sugestoes gerais
+- Foi criado utilitario compartilhado para detectar modos disponiveis na aba e validar se cada sugestao pertence ao recorte anual, mensal ou diario.
+- Validacao executada:
+  - `npx tsc --noEmit` no frontend executado com sucesso apos a integracao.
+
+9. Correcao de estado confuso sem sugestoes + ampliacao para fluxo de caixa
+- Pastas alteradas:
+  - `backend/`
+  - `frontend/`
+- Arquivos alterados:
+  - [backend/app/services/analytics/__init__.py](backend/app/services/analytics/__init__.py)
+  - [frontend/src/pages/charts-page.tsx](frontend/src/pages/charts-page.tsx)
+- Problema observado:
+  - ao carregar algumas planilhas de financeiro/fluxo de caixa, o overview principal podia ficar preso na mensagem `Aguarde o carregamento das sugestoes para montar o overview`, mesmo quando a geracao de sugestoes ja havia terminado.
+- Correcao aplicada no frontend:
+  - o overview principal agora diferencia `carregando` de `nao encontrei sugestoes`.
+  - quando nao houver sugestoes compativeis, o usuario recebe mensagem clara explicando que faltou combinacao suficiente de colunas temporais, categorias e metricas numericas reconhecidas.
+  - a tela oferece atalho para abrir a tabela real em vez de parecer travada.
+- Ampliacao aplicada no backend/frontend para reconhecimento financeiro:
+  - receitas tambem passam a reconhecer termos como `receb`, `credito`
+  - despesas tambem passam a reconhecer termos como `pag`, `debito`
+  - saldo tambem passa a reconhecer `acumulado`
+  - receita realizada/projetada ganhou suporte adicional para `recebimentos`, `projetada`, `prevista`
+- Objetivo da ampliacao:
+  - melhorar compatibilidade com planilhas de fluxo de caixa que usam nomenclaturas mais proximas de operacao financeira do dia a dia.
+- Validacao executada:
+  - `npx tsc --noEmit` no frontend executado com sucesso apos a correcao.
+
+10. Ampliacao de termos financeiros para meios de pagamento
+- Pastas alteradas:
+  - `backend/`
+  - `frontend/`
+- Arquivos alterados:
+  - [backend/app/services/analytics/__init__.py](backend/app/services/analytics/__init__.py)
+  - [frontend/src/pages/charts-page.tsx](frontend/src/pages/charts-page.tsx)
+  - [frontend/src/components/charts/value-format.ts](frontend/src/components/charts/value-format.ts)
+- Termos adicionados para melhorar deteccao de planilhas financeiras e fluxo de caixa:
+  - `boleto`
+  - `pix`
+  - `pagamento`
+  - `pagamentos`
+  - `credito`
+  - `debito`
+- Efeito pratico:
+  - esses termos agora ajudam a identificar metricas de entrada/saida
+  - tambem ajudam a identificar composicoes por forma/meio de pagamento
+  - a formatacao visual dos valores passa a tratar esses nomes como monetarios quando usados como metricas
+- Validacao executada:
+  - `npx tsc --noEmit` no frontend executado com sucesso apos a ampliacao.
+
+11. Ampliacao adicional para formas de pagamento e transferencia
+- Pastas alteradas:
+  - `backend/`
+  - `frontend/`
+- Arquivos alterados:
+  - [backend/app/services/analytics/__init__.py](backend/app/services/analytics/__init__.py)
+  - [frontend/src/pages/charts-page.tsx](frontend/src/pages/charts-page.tsx)
+  - [frontend/src/components/charts/value-format.ts](frontend/src/components/charts/value-format.ts)
+- Termos adicionados nesta rodada:
+  - `cartao`
+  - `ted`
+  - `doc`
+  - `transferencia`
+  - `dinheiro`
+- Efeito pratico:
+  - passam a contar como pistas de metricas financeiras
+  - passam a contar como pistas de composicao por meio/forma de pagamento
+  - passam a receber formatacao monetaria quando usados como metricas
+- Validacao executada:
+  - `npx tsc --noEmit` no frontend executado com sucesso apos a ampliacao.
+
 ## Conceitos ja existentes que NAO devem ser refeitos
 1. Contexto de arquivo e determinado por `?file=<uuid>` na URL para rotas analiticas.
 2. Estado global principal ja existe em Zustand em [frontend/src/stores/index.ts](frontend/src/stores/index.ts).

@@ -47,7 +47,12 @@ export function KPICard({
 
     switch (format) {
       case 'currency':
-        return `${prefix}${num.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${suffix}`;
+        return `${prefix}${num.toLocaleString('pt-BR', {
+          style: 'currency',
+          currency: 'BRL',
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}${suffix}`;
       case 'percentage':
         return `${prefix}${num.toFixed(1)}%${suffix}`;
       case 'decimal':

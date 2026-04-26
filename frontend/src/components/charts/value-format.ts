@@ -23,6 +23,23 @@ export function inferValueKind(metricName: string): ValueKind {
     key.includes('preco') ||
     key.includes('preco') ||
     key.includes('receita') ||
+    key.includes('despesa') ||
+    key.includes('saldo') ||
+    key.includes('superavit') ||
+    key.includes('deficit') ||
+    key.includes('imposto') ||
+    key.includes('folha') ||
+    key.includes('pagamento') ||
+    key.includes('pagamentos') ||
+    key.includes('pix') ||
+    key.includes('boleto') ||
+    key.includes('cartao') ||
+    key.includes('ted') ||
+    key.includes('doc') ||
+    key.includes('transferencia') ||
+    key.includes('dinheiro') ||
+    key.includes('credito') ||
+    key.includes('debito') ||
     key.includes('faturamento') ||
     key.includes('custo') ||
     key.includes('total') ||

@@ -111,6 +111,55 @@ class TestAnalyticsService:
         scores = [s.confidence_score for s in suggestions]
         assert scores == sorted(scores, reverse=True)
 
+    def test_financial_dataset_prioritizes_monthly_yearly_and_pie_charts(self, tmp_path: Path):
+        file_uuid = "unit-test-finance"
+        folder = tmp_path / file_uuid
+        folder.mkdir(parents=True, exist_ok=True)
+        db_path = folder / "analytics.db"
+
+        conn = duckdb.connect(str(db_path))
+        conn.execute(
+            """
+            CREATE TABLE sheet_financeiro (
+                mes VARCHAR,
+                ano INTEGER,
+                categoria_despesa VARCHAR,
+                status_receita VARCHAR,
+                receita DOUBLE,
+                despesa DOUBLE,
+                saldo DOUBLE
+            );
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO sheet_financeiro VALUES
+            ('Jan', 2025, 'Impostos', 'Realizada', 15000, 5000, 10000),
+            ('Fev', 2025, 'Folha', 'Faturada', 18000, 6500, 11500),
+            ('Mar', 2025, 'Sede', 'Realizada', 21000, 7200, 13800),
+            ('Abr', 2025, 'Vendas', 'Faturada', 19500, 6800, 12700);
+            """
+        )
+        conn.close()
+
+        original_storage = analytics_service.storage_path
+        analytics_service.storage_path = tmp_path
+        try:
+            suggestions = analytics_service.suggest_charts(file_uuid, "financeiro")
+        finally:
+            analytics_service.storage_path = original_storage
+
+        titles = [suggestion.title for suggestion in suggestions]
+        chart_types = [suggestion.chart_type for suggestion in suggestions]
+
+        assert titles[0] == "Receitas mensais"
+        assert "Despesas mensais" in titles
+        assert "Saldos anuais" in titles
+        assert "Divisao das receitas" in titles
+        assert "Divisao das despesas" in titles
+        assert "donut" in chart_types
+        assert "pie" in chart_types
+
     def test_chart_data_bar_aggregation(self, tmp_path: Path):
         """Testa agregacao de dados para bar chart."""
         file_uuid = "unit-test-bar"

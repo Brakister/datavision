@@ -220,13 +220,20 @@ class IngestionService:
         raise UnsupportedFormatException(f"Formato nao implementado para leitura primaria: {file_format}")
 
     def _normalize_tabular_frame(self, frame: pl.DataFrame) -> pl.DataFrame:
-        """Promove linha de cabecalho quando o reader gera colunas Unnamed:* (Excel com titulos/linhas em branco)."""
+        """Promove linha de cabecalho quando o reader gera colunas genericas/ruidosas."""
         if frame.width == 0 or frame.height == 0:
             return frame
 
         columns = [str(c) for c in frame.columns]
         unnamed = sum(1 for name in columns if name.lower().startswith("unnamed"))
-        if unnamed / max(len(columns), 1) < 0.6:
+        generic = sum(1 for name in columns if self._is_generic_column_name(name))
+        current_header_quality = self._header_quality(columns)
+        should_try_promote = (
+            unnamed / max(len(columns), 1) >= 0.25
+            or generic / max(len(columns), 1) >= 0.35
+            or current_header_quality < 0.55
+        )
+        if not should_try_promote:
             return frame
 
         header_idx = self._detect_header_row_index(frame)
@@ -242,6 +249,11 @@ class IngestionService:
             else:
                 new_names.append(text)
 
+        candidate_header_quality = self._header_quality(new_names)
+        keyword_score = self._header_keyword_score(new_names)
+        if candidate_header_quality <= current_header_quality and keyword_score < 2:
+            return frame
+
         new_names = self._dedupe_column_names(new_names)
 
         trimmed = frame.slice(header_idx + 1, max(0, frame.height - (header_idx + 1)))
@@ -250,6 +262,42 @@ class IngestionService:
 
         trimmed = trimmed.rename({old: new for old, new in zip(trimmed.columns, new_names)})
         return trimmed
+
+    def _is_generic_column_name(self, name: str) -> bool:
+        normalized = name.strip().lower()
+        if normalized == "":
+            return True
+        if normalized.startswith("unnamed"):
+            return True
+        if re.fullmatch(r"col_\d+", normalized):
+            return True
+        if re.fullmatch(r"\d+", normalized):
+            return True
+        return False
+
+    def _header_quality(self, names: list[str]) -> float:
+        if not names:
+            return 0.0
+
+        non_generic = [name for name in names if not self._is_generic_column_name(name)]
+        filled_ratio = len(non_generic) / len(names)
+        unique_ratio = len({name.strip().lower() for name in non_generic if name.strip()}) / max(len(non_generic), 1)
+        return (filled_ratio * 0.75) + (unique_ratio * 0.25)
+
+    def _header_keyword_score(self, names: list[str]) -> int:
+        keywords = (
+            "descricao", "descrição", "conta", "codigo", "código", "detalhamento",
+            "referencia", "referência", "mes", "mês", "ano", "data",
+            "jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez",
+            "janeiro", "fevereiro", "marco", "março", "abril", "maio", "junho", "julho",
+            "agosto", "setembro", "outubro", "novembro", "dezembro",
+        )
+        score = 0
+        for name in names:
+            normalized = str(name).strip().lower()
+            if any(keyword in normalized for keyword in keywords):
+                score += 1
+        return score
 
     def _detect_header_row_index(self, frame: pl.DataFrame) -> Optional[int]:
         max_scan = min(15, frame.height)

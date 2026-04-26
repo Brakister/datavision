@@ -18,6 +18,11 @@ import {
   ChevronUp,
 } from 'lucide-react';
 import type { FilterOperator, ColumnSchema } from '@/types';
+import {
+  getAnalysisModeLabel,
+  getAvailableAnalysisModes,
+  type AnalysisMode,
+} from '@/utils/analysis-mode';
 
 interface FilterPanelProps {
   columns: ColumnSchema[];
@@ -32,6 +37,8 @@ export function FilterPanel({ columns, onApplyFilters, affectedRows }: FilterPan
     removeFilter,
     clearFilters,
     setFilters,
+    selectedAnalysisMode,
+    setSelectedAnalysisMode,
     savedPresets,
     savePreset,
     deletePreset,
@@ -44,6 +51,7 @@ export function FilterPanel({ columns, onApplyFilters, affectedRows }: FilterPan
   const [newFilterValueTo, setNewFilterValueTo] = React.useState('');
   const [presetName, setPresetName] = React.useState('');
   const [showSavePreset, setShowSavePreset] = React.useState(false);
+  const availableAnalysisModes = React.useMemo(() => getAvailableAnalysisModes(columns), [columns]);
 
   const operatorOptions = [
     { value: 'equals', label: 'Igual a' },
@@ -111,6 +119,10 @@ export function FilterPanel({ columns, onApplyFilters, affectedRows }: FilterPan
     return operatorOptions.find((o) => o.value === op)?.label || op;
   };
 
+  const handleAnalysisModeSelect = (mode: AnalysisMode) => {
+    setSelectedAnalysisMode(mode);
+  };
+
   return (
     <Card className="border-dashed">
       <CardHeader className="pb-3">
@@ -148,6 +160,37 @@ export function FilterPanel({ columns, onApplyFilters, affectedRows }: FilterPan
             transition={{ duration: 0.2 }}
           >
             <CardContent className="space-y-4">
+              {/* Filtros ativos */}
+              {availableAnalysisModes.length > 1 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    Formas de Analises
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {availableAnalysisModes.map((mode) => {
+                      const isActive = selectedAnalysisMode === mode;
+                      return (
+                        <Button
+                          key={mode}
+                          type="button"
+                          variant={isActive ? 'default' : 'outline'}
+                          size="sm"
+                          className="h-8"
+                          onClick={() => handleAnalysisModeSelect(mode)}
+                        >
+                          {getAnalysisModeLabel(mode)}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Ao selecionar uma forma de analise, o dashboard prioriza os graficos e leituras desse recorte.
+                  </p>
+                </div>
+              )}
+
+              {availableAnalysisModes.length > 1 && <Separator />}
+
               {/* Filtros ativos */}
               {activeFilters.length > 0 && (
                 <div className="space-y-2">

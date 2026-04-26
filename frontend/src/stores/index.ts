@@ -9,6 +9,7 @@ import type {
   WidgetLayout,
   ChartSuggestion,
 } from '@/types';
+import type { AnalysisMode } from '@/utils/analysis-mode';
 
 type UploadSessionState = {
   fileUuid: string | null;
@@ -51,6 +52,8 @@ interface AppState {
   removeFilter: (index: number) => void;
   clearFilters: () => void;
   setFilters: (filters: FilterOperator[]) => void;
+  selectedAnalysisMode: AnalysisMode;
+  setSelectedAnalysisMode: (mode: AnalysisMode) => void;
 
   // Presets de filtro
   savedPresets: FilterPreset[];
@@ -131,6 +134,8 @@ export const useAppStore = create<AppState>()(
           })),
         clearFilters: () => set({ activeFilters: [] }),
         setFilters: (filters) => set({ activeFilters: filters }),
+        selectedAnalysisMode: 'all',
+        setSelectedAnalysisMode: (mode) => set({ selectedAnalysisMode: mode }),
 
         savedPresets: [],
         savePreset: (preset) =>
@@ -205,6 +210,7 @@ export const useAppStore = create<AppState>()(
           uploadDraftStrictMode: state.uploadDraftStrictMode,
           savedPresets: state.savedPresets,
           savedLayouts: state.savedLayouts,
+          selectedAnalysisMode: state.selectedAnalysisMode,
           uploadSession: state.uploadSession,
           sidebarCollapsed: state.sidebarCollapsed,
           mobileSidebarOpen: state.mobileSidebarOpen,

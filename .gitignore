@@ -7,3 +7,5 @@
 postgres-data/
 redis-data/
 datavision-storage/
+*.xlsx
+*.csv
